@@ -94,8 +94,8 @@
 
   let displayTitle = $derived(isDirty ? `${title} - ${$t('titlebar.unsaved')}` : title);
 
-  // Whether to show inline tabs (macOS only, when tabs exist)
-  let showInlineTabs = $derived(isMacOS && tabs.length > 0);
+  // Whether to show inline tabs (when tabs exist)
+  let showInlineTabs = $derived(tabs.length > 0);
 
   // Tab drag reorder state (mouse-based, not HTML5 DnD — more reliable in Tauri WebKit)
   let dragTabIndex = $state<number | null>(null);
@@ -616,6 +616,13 @@
             onclick={() => { if (!isDragging) onSwitchTab(tab.id); }}
             onauxclick={(e) => { if (e.button === 1) { e.preventDefault(); handleTabClose(e, tab); } }}
             onpointerdown={(e) => handleTabPointerDown(e, index)}>
+            <span class="tab-icon">
+              {#if tab.flavor === 'typst'}
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></svg>
+              {:else}
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+              {/if}
+            </span>
             <span class="tab-name">
               {#if tab.isDirty}<span class="dirty-dot"></span>{/if}
               {#if tab.readOnly}<svg class="readonly-lock" width="9" height="10" viewBox="0 0 10 12" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true"><rect x="1.5" y="5" width="7" height="6" rx="1"/><path d="M3 5V3.5a2 2 0 0 1 4 0V5"/></svg>{/if}
@@ -710,35 +717,41 @@
 <style>
   .titlebar {
     display: flex;
-    align-items: center;
+    align-items: flex-end;
     justify-content: space-between;
-    height: var(--titlebar-height);
-    background: var(--bg-titlebar);
-    border-bottom: 1px solid var(--border-light);
-    padding: 0 0.5rem;
+    height: 40px;
+    background: var(--bg-secondary, #f3f3f3);
+    border-bottom: 1px solid var(--border-light, #e0e0e0);
+    padding: 0;
     -webkit-app-region: drag;
+    box-sizing: border-box;
   }
 
   .titlebar-left {
     flex: 0 0 auto;
-    padding-left: 0.5rem;
+    padding: 0 10px 0 14px;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    -webkit-app-region: drag;
   }
 
   .app-name {
-    font-size: var(--font-size-xs);
+    font-size: 12px;
     font-weight: 600;
     color: var(--text-secondary);
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    user-select: none;
   }
 
   .titlebar-center {
     flex: 1;
-    text-align: center;
     -webkit-app-region: drag;
     display: flex;
-    align-items: center;
+    align-items: flex-end;
+    height: 100%;
     overflow: hidden;
+    min-width: 0;
   }
 
   .title-text {
@@ -746,20 +759,23 @@
     color: var(--text-secondary);
     flex: 1;
     text-align: center;
+    line-height: 40px;
   }
 
   .titlebar-right {
     display: flex;
     gap: 0;
     -webkit-app-region: no-drag;
+    height: 40px;
+    align-self: flex-start;
   }
 
   .titlebar-btn {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 2.5rem;
-    height: var(--titlebar-height);
+    width: 46px;
+    height: 100%;
     border: none;
     background: transparent;
     color: var(--text-secondary);
@@ -768,7 +784,7 @@
   }
 
   .titlebar-btn:hover {
-    background: var(--bg-hover);
+    background: rgba(0, 0, 0, 0.06);
     color: var(--text-primary);
   }
 
@@ -777,13 +793,13 @@
     color: white;
   }
 
-  /* ── macOS inline tabs ── */
+  /* ── Tabs strip ── */
   .scroll-arrow {
     display: flex;
     align-items: center;
     justify-content: center;
     width: 20px;
-    height: 28px;
+    height: 34px;
     border: none;
     background: transparent;
     color: var(--text-muted);
@@ -799,13 +815,16 @@
 
   .mac-tabs-scroll {
     display: flex;
-    align-items: center;
+    align-items: flex-end;
+    height: 100%;
     overflow-x: auto;
     overflow-y: hidden;
     min-width: 0; /* allow shrink for overflow */
     max-width: 100%;
     -webkit-app-region: no-drag;
     scrollbar-width: none;
+    gap: 2px;
+    padding: 0 2px;
   }
   .mac-tabs-scroll::-webkit-scrollbar {
     display: none;
@@ -814,27 +833,40 @@
   .tab-item {
     display: flex;
     align-items: center;
-    gap: 0.3rem;
-    height: 28px;
-    padding: 0 0.5rem;
-    max-width: 150px;
+    gap: 0.45rem;
+    height: 34px;
+    padding: 0 0.65rem 0 0.75rem;
+    min-width: 100px;
+    max-width: 200px;
     flex-shrink: 0;
-    border: none;
+    border: 1px solid transparent;
+    border-bottom: none;
+    border-radius: 8px 8px 0 0;
     background: transparent;
-    color: var(--text-muted);
-    font-size: 11px;
+    color: var(--text-secondary, #505050);
+    font-size: var(--font-size-sm, 12px);
     cursor: pointer;
-    border-bottom: 2px solid transparent;
     -webkit-app-region: no-drag;
+    position: relative;
     transition: background var(--transition-fast), color var(--transition-fast);
   }
   .tab-item:hover {
-    background: var(--bg-hover);
+    background: rgba(0, 0, 0, 0.04);
     color: var(--text-primary);
   }
   .tab-item.active {
-    color: var(--text-primary);
-    border-bottom-color: var(--accent-color);
+    background: var(--bg-primary, #ffffff);
+    color: var(--text-primary, #111111);
+    font-weight: 500;
+    border: 1px solid var(--border-light, #e0e0e0);
+    border-bottom: 1px solid var(--bg-primary, #ffffff);
+    margin-bottom: -1px;
+    z-index: 2;
+  }
+  .tab-icon {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
   }
   /* Typst tabs: distinct teal underline (vs. markdown's blue), matching
      TabBar.svelte's non-macOS tab strip so the flavor color is consistent
@@ -897,16 +929,16 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 16px;
-    height: 16px;
-    border-radius: 3px;
-    font-size: 12px;
+    width: 18px;
+    height: 18px;
+    border-radius: 4px;
+    font-size: 13px;
     line-height: 1;
     color: var(--text-muted);
     flex-shrink: 0;
     opacity: 0;
     pointer-events: none;
-    transition: opacity 0.15s, background var(--transition-fast);
+    transition: opacity 0.15s, background var(--transition-fast), color var(--transition-fast);
   }
   .tab-item.active .tab-close {
     opacity: 1;
@@ -917,7 +949,7 @@
     pointer-events: auto;
   }
   .tab-close:hover {
-    background: var(--bg-active);
+    background: var(--bg-hover, rgba(0, 0, 0, 0.08));
     color: var(--text-primary);
   }
 
@@ -955,8 +987,7 @@
     white-space: nowrap;
   }
 
-  /* Windows/Linux: hide custom titlebar, use native decorations */
-  :global(.platform-windows) .titlebar,
+  /* Linux: hide custom titlebar, use native decorations */
   :global(.platform-linux) .titlebar {
     display: none;
   }
@@ -990,19 +1021,23 @@
   /* Boundary for the click-outside test only — the menu itself is `fixed`. */
   .new-doc-root {
     display: flex;
-    align-items: center;
+    align-items: flex-end;
+    height: 100%;
+    margin-bottom: 3px;
+    margin-left: 4px;
     flex-shrink: 0;
   }
   .new-doc-btn {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 24px;
+    width: 28px;
     height: 28px;
     border: none;
+    border-radius: 4px;
     background: transparent;
     color: var(--text-muted);
-    font-size: 15px;
+    font-size: 16px;
     line-height: 1;
     cursor: pointer;
     flex-shrink: 0;
@@ -1015,7 +1050,7 @@
   .new-doc-btn:hover,
   .new-doc-btn.active {
     color: var(--text-primary);
-    background: var(--bg-hover, rgba(127, 127, 127, 0.12));
+    background: rgba(0, 0, 0, 0.06);
   }
   .new-doc-menu {
     position: fixed;
@@ -1027,6 +1062,42 @@
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
     min-width: 190px;
     -webkit-app-region: no-drag;
+  }
+
+  /* Dark mode overrides for TitleBar */
+  :global([data-theme="dark"]) .titlebar {
+    background: var(--bg-titlebar, #202020);
+    border-bottom-color: var(--border-light, #2d2d2d);
+  }
+  :global([data-theme="dark"]) .tab-item:hover {
+    background: rgba(255, 255, 255, 0.06);
+  }
+  :global([data-theme="dark"]) .tab-item.active {
+    background: var(--bg-primary, #1e1e1e);
+    border-color: var(--border-light, #2d2d2d);
+    border-bottom-color: var(--bg-primary, #1e1e1e);
+  }
+  :global([data-theme="dark"]) .tab-close:hover {
+    background: rgba(255, 255, 255, 0.12);
+  }
+  :global([data-theme="dark"]) .new-doc-btn:hover,
+  :global([data-theme="dark"]) .new-doc-btn.active {
+    background: rgba(255, 255, 255, 0.08);
+  }
+  :global([data-theme="dark"]) .titlebar-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+  }
+
+  /* macOS tab item adjustments */
+  :global(.platform-macos) .tab-item {
+    height: 28px;
+    border-radius: 0;
+    border: none;
+    border-bottom: 2px solid transparent;
+  }
+  :global(.platform-macos) .tab-item.active {
+    border-bottom-color: var(--accent-color);
+    margin-bottom: 0;
   }
 
   .titlebar-context-menu {

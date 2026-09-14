@@ -784,7 +784,7 @@
         onbeforeinput={handleBeforeInput}
         onpaste={handlePaste}
         onkeydown={handleKeydown}
-        spellcheck="true"
+        spellcheck="false"
         readonly={readOnly}
       ></textarea>
     </div>

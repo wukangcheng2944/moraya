@@ -428,7 +428,11 @@ const INDEXABLE_EXTENSIONS: &[&str] = &[
 ];
 
 /// Directories to skip during collection.
-const SKIP_DIRS: &[&str] = &["node_modules", "target", ".git", "__pycache__", ".venv", "dist", "build"];
+const SKIP_DIRS: &[&str] = &[
+    "node_modules", "target", ".git", "__pycache__", ".venv", "dist", "build",
+    "AppData", "$RECYCLE.BIN", "System Volume Information", ".cargo", ".rustup",
+    ".pnpm-store", ".vscode", ".idea", "bin", "obj",
+];
 
 /// Collect all indexable text files from a knowledge base directory.
 fn collect_indexable_files(kb_path: &Path) -> Result<Vec<PathBuf>, String> {

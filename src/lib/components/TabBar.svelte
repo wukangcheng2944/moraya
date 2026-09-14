@@ -498,6 +498,19 @@
         onauxclick={(e) => { if (e.button === 1) { e.preventDefault(); handleCloseTab(e, tab); } }}
         onpointerdown={(e) => handleTabPointerDown(e, index)}
       >
+        <span class="tab-icon">
+          {#if tab.flavor === 'typst'}
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+              <rect width="16" height="16" rx="3" fill="#239dad"/>
+              <text x="8" y="11.5" font-size="9" font-family="sans-serif" font-weight="bold" fill="white" text-anchor="middle">T</text>
+            </svg>
+          {:else}
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+              <rect width="16" height="16" rx="3" fill="#0078d4"/>
+              <path d="M4 11V5l2.5 3L9 5v6M12 11V8.5m0 0l-1.5 1.5m1.5-1.5l1.5 1.5" stroke="white" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          {/if}
+        </span>
         <span class="tab-name">
           {#if tab.isDirty}<span class="dirty-dot"></span>{/if}
           {#if tab.readOnly}<svg class="readonly-lock" width="9" height="10" viewBox="0 0 10 12" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true"><rect x="1.5" y="5" width="7" height="6" rx="1"/><path d="M3 5V3.5a2 2 0 0 1 4 0V5"/></svg>{/if}
@@ -538,20 +551,23 @@
 <style>
   .tabbar {
     display: flex;
-    align-items: center;
-    height: 36px;
-    background: var(--bg-secondary);
-    border-bottom: 1px solid var(--border-light);
+    align-items: flex-end;
+    height: 40px;
+    background: var(--bg-secondary, #f3f3f3);
+    padding: 4px 8px 0 8px;
+    border-bottom: 1px solid var(--border-light, #e0e0e0);
     overflow: hidden;
   }
 
   .tabs-scroll {
     display: flex;
+    align-items: flex-end;
     flex: 1;
     overflow-x: auto;
     overflow-y: hidden;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
+    gap: 2px;
   }
 
   .tabs-scroll::-webkit-scrollbar {
@@ -562,45 +578,61 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 24px;
-    height: 36px;
+    width: 22px;
+    height: 32px;
     border: none;
-    background: var(--bg-secondary);
+    background: transparent;
     color: var(--text-muted);
     cursor: pointer;
     flex-shrink: 0;
     z-index: 1;
+    border-radius: 4px;
+    margin-bottom: 2px;
     transition: color var(--transition-fast), background var(--transition-fast);
   }
   .scroll-arrow:hover {
     color: var(--text-primary);
-    background: var(--bg-hover);
+    background: rgba(0, 0, 0, 0.05);
   }
 
   .tab-item {
     display: flex;
     align-items: center;
-    gap: 0.4rem;
-    padding: 0 0.75rem;
-    height: 36px;
-    min-width: 0;
-    max-width: 180px;
+    gap: 0.45rem;
+    padding: 0 0.65rem 0 0.75rem;
+    height: 34px;
+    min-width: 100px;
+    max-width: 200px;
     cursor: pointer;
-    border-right: 1px solid var(--border-light);
-    color: var(--text-secondary);
-    font-size: var(--font-size-sm);
+    border-radius: 8px 8px 0 0;
+    border: 1px solid transparent;
+    border-bottom: none;
+    color: var(--text-secondary, #505050);
+    font-size: var(--font-size-sm, 12px);
     transition: background var(--transition-fast), color var(--transition-fast);
     flex-shrink: 0;
+    position: relative;
   }
 
-  .tab-item:active {
-    background: var(--bg-hover);
+  .tab-item:hover {
+    background: rgba(0, 0, 0, 0.04);
+    color: var(--text-primary, #1a1a1a);
   }
 
   .tab-item.active {
-    background: var(--bg-primary);
-    color: var(--text-primary);
-    border-bottom: 2px solid var(--accent-color);
+    background: var(--bg-primary, #ffffff);
+    color: var(--text-primary, #111111);
+    font-weight: 500;
+    border: 1px solid var(--border-light, #e0e0e0);
+    border-bottom: 1px solid var(--bg-primary, #ffffff);
+    margin-bottom: -1px;
+    z-index: 2;
+  }
+
+  .tab-icon {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
   }
 
   /* Typst tabs get a distinct teal underline (vs. markdown's blue accent) so
@@ -698,16 +730,19 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 36px;
-    height: 36px;
+    width: 28px;
+    height: 28px;
+    border-radius: 4px;
     color: var(--text-muted);
     cursor: pointer;
     flex-shrink: 0;
+    margin-bottom: 3px;
+    margin-left: 4px;
     transition: background var(--transition-fast), color var(--transition-fast);
   }
 
-  .tab-new:active {
-    background: var(--bg-hover);
+  .tab-new:hover {
+    background: rgba(0, 0, 0, 0.06);
     color: var(--text-primary);
   }
 </style>

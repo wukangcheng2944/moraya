@@ -282,6 +282,18 @@
     }
   }
 
+  /**
+   * Schedule non-blocking visual caret update using requestAnimationFrame.
+   * Prevents forced synchronous layout reflow (Layout Thrashing) during fast typing.
+   */
+  function scheduleVisualCaret() {
+    if (visualCaretRaf) return;
+    visualCaretRaf = requestAnimationFrame(() => {
+      visualCaretRaf = undefined;
+      updateVisualCaret();
+    });
+  }
+
   function computeHeadingTops() {
     headingTopsRaf = undefined;
     if (!editor) { cachedHeadingTops = []; return; }
@@ -417,6 +429,7 @@
   let lastReportedCursorLine = -1; // dedup cursor line reports
   let visualCaretEl: HTMLDivElement | null = null; // Custom caret overlay for consistent 25px height
   let caretBlinkRaf: number | undefined; // RAF for restarting blink animation
+  let visualCaretRaf: number | undefined; // RAF for coalesced non-blocking caret updates
 
   // References for event listener cleanup in onDestroy
   let mountedEditorEl: HTMLDivElement | null = null;
@@ -2803,8 +2816,8 @@
     };
 
     if (needsSerialization) {
-      // Split mode: full serialization every 150ms for SourceEditor sync
-      editorOptions.changeDebounceMs = 150;
+      // Split mode: full serialization debounced to 300ms for smooth typing and SourceEditor sync
+      editorOptions.changeDebounceMs = 300;
       editorOptions.onChange = (markdown) => {
         if (!isMounted) return;
         if (syncingFromExternal) return;
@@ -2873,17 +2886,23 @@
     visualCaretEl.setAttribute('aria-hidden', 'true');
     editorEl.appendChild(visualCaretEl);
 
-    // Cursor line reporter for split mode sync
+    // Cursor line reporter for split mode sync (rAF-throttled to avoid heavy string slicing during fast typing)
+    let cursorLineRaf: number | undefined;
     const reportCursorLine = onCursorLineChange ? () => {
       if (!editor) return;
-      const sel = editor.view.state.selection;
-      const textBefore = editor.view.state.doc.textBetween(0, sel.from, '\n\n', '');
-      const frontmatterLines = storedFrontmatter ? storedFrontmatter.split('\n').length - 1 : 0;
-      const lineIndex = frontmatterLines + (textBefore.split('\n').length - 1);
-      if (lineIndex !== lastReportedCursorLine) {
-        lastReportedCursorLine = lineIndex;
-        onCursorLineChange!(lineIndex);
-      }
+      if (cursorLineRaf) return;
+      cursorLineRaf = requestAnimationFrame(() => {
+        cursorLineRaf = undefined;
+        if (!editor) return;
+        const sel = editor.view.state.selection;
+        const textBefore = editor.view.state.doc.textBetween(0, sel.from, '\n\n', '');
+        const frontmatterLines = storedFrontmatter ? storedFrontmatter.split('\n').length - 1 : 0;
+        const lineIndex = frontmatterLines + (textBefore.split('\n').length - 1);
+        if (lineIndex !== lastReportedCursorLine) {
+          lastReportedCursorLine = lineIndex;
+          onCursorLineChange!(lineIndex);
+        }
+      });
     } : null;
 
     // Override dispatchTransaction: update caret + cursor line on every transaction
@@ -2897,7 +2916,7 @@
         // exactly as they did before this fix.
         if (tr.docChanged) remapSearchState(tr, tr.doc);
         view.updateState(view.state.apply(tr));
-        updateVisualCaret();
+        scheduleVisualCaret();
         if (view.state.selection.from !== oldFrom) {
           reportCursorLine?.();
         }
@@ -3870,6 +3889,7 @@
   onDestroy(() => {
     isMounted = false; // Signal async callbacks to stop
     if (caretBlinkRaf) cancelAnimationFrame(caretBlinkRaf);
+    if (visualCaretRaf) cancelAnimationFrame(visualCaretRaf);
     if (visualCaretEl) { visualCaretEl.remove(); visualCaretEl = null; }
     if (syncResetTimer) clearTimeout(syncResetTimer);
     if (externalSyncTimer) clearTimeout(externalSyncTimer);

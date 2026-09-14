@@ -72,7 +72,7 @@
   import { ask, currentDialog } from '$lib/utils/native-dialog';
   import { t, locale } from '$lib/i18n';
   import { get } from 'svelte/store';
-  import { getPlatformClass, isIPadOS, isMacOS, isTauri, isVirtualKeyboardVisible } from '$lib/utils/platform';
+  import { getPlatformClass, isIPadOS, isMacOS, isTauri, isVirtualKeyboardVisible, isWindows } from '$lib/utils/platform';
   import {
     SHORTCUT_CATALOG,
     FLAVOR_ONLY_MENU_ITEMS,
@@ -81,7 +81,6 @@
     eventMatchesBinding,
     scopeOf,
   } from '$lib/shortcuts/catalog';
-  import TabBar from '$lib/components/TabBar.svelte';
   import TouchToolbar from '$lib/editor/TouchToolbar.svelte';
   import { tabsStore } from '$lib/stores/tabs-store';
   import { editorLoadingStore } from '$lib/stores/editor-loading-store';
@@ -4439,17 +4438,6 @@ ${tr('welcome.tip')}
     onReorderTabs={(from, to) => tabsStore.reorderTabs(from, to)}
     onDetachStart={performTabDetachStart} onDetachEnd={performTabDetachEnd}
     onAttachTab={performTabAttach} />
-
-  {#if false && !isMacOS}
-    <TabBar
-      onNewTab={() => handleNewFile()}
-      onCloseTab={handleCloseTab}
-      {externalDropIndex}
-      onDetachStart={performTabDetachStart}
-      onDetachEnd={performTabDetachEnd}
-      onAttachTab={performTabAttach}
-    />
-  {/if}
 
   <div class="app-body">
     {#if showSidebar && !viewChrome.masksSidebar}

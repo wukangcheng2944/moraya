@@ -1189,13 +1189,19 @@ pub fn run() {
                     let _ = window.set_title_bar_style(TitleBarStyle::Overlay);
                 }
 
+                #[cfg(target_os = "windows")]
+                {
+                    let _ = window.set_decorations(false);
+                }
+
                 // Windows/Linux: shrink window to fit screen (taskbar/decorations)
                 #[cfg(all(not(target_os = "macos"), not(target_os = "ios")))]
                 fit_window_to_screen(&window);
 
-                // Create and set native menu
+                // Create and set native menu (macOS menu bar only; Windows/Linux uses modern Fluent CommandBar)
                 let app_handle = app.handle().clone();
                 let native_menu = menu::create_menu(&app_handle)?;
+                #[cfg(target_os = "macos")]
                 app.set_menu(native_menu)?;
 
                 // Set up macOS Dock right-click menu with "New Window"

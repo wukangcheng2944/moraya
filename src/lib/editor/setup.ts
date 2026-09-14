@@ -131,7 +131,7 @@ export async function createEditor(options: EditorOptions): Promise<MorayaEditor
     editable: () => initialEditable,
     attributes: {
       class: 'moraya-editor',
-      spellcheck: 'true',
+      spellcheck: 'false',
     },
   })
 
