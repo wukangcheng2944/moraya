@@ -118,54 +118,186 @@
   let mergeTargetIndex = $state<number | null>(null);
   let mergeTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // Sub-tab internal drag state
+  // Sub-tab internal drag state with smooth FLIP / sliding transitions
   let dragSubGroupId = $state<string | null>(null);
   let dragSubIndex = $state<number | null>(null);
-  let subStartX = 0;
-  let isSubDragging = false;
+  let justFinishedSubDrag = false;
+  let activeSubDragCleanup: (() => void) | null = null;
+
+  function resetAllChipStyles(chips: HTMLElement[]) {
+    for (const chip of chips) {
+      chip.style.transform = '';
+      chip.style.transition = '';
+      chip.style.zIndex = '';
+      chip.style.pointerEvents = '';
+      chip.classList.remove('sub-dragging');
+    }
+    document.body.style.cursor = '';
+  }
+
+  function handleGlobalPointerUp() {
+    if (activeSubDragCleanup) {
+      activeSubDragCleanup();
+    }
+  }
 
   function handleSubTabPointerDown(event: PointerEvent, groupId: string, subIndex: number) {
     if (event.button !== 0) return;
     if ((event.target as HTMLElement).closest('.sub-tab-close')) return;
     event.stopPropagation();
-    subStartX = event.clientX;
-    isSubDragging = false;
-    dragSubGroupId = groupId;
-    dragSubIndex = subIndex;
+
+    // Cancel any previous stuck drag cleanly
+    if (activeSubDragCleanup) {
+      activeSubDragCleanup();
+    }
+
     const el = event.currentTarget as HTMLElement;
+    const container = el.closest('.sub-tabs-strip') as HTMLElement | null;
+    if (!container) return;
+
     const pointerId = event.pointerId;
-    el.setPointerCapture(pointerId);
+    try { el.setPointerCapture(pointerId); } catch (_) {}
+
+    const chipEls = Array.from(container.querySelectorAll<HTMLElement>('.sub-tab-chip'));
+    if (subIndex >= chipEls.length) return;
+
+    const startX = event.clientX;
+    const initialRects = chipEls.map(c => c.getBoundingClientRect());
+    const originIndex = subIndex;
+    let currentIndex = originIndex;
+    let isDragging = false;
+
+    dragSubGroupId = groupId;
+    dragSubIndex = originIndex;
+
+    function updateDisplacements(targetIdx: number) {
+      chipEls.forEach((chip, j) => {
+        if (j === originIndex) return;
+        let shift = 0;
+        if (targetIdx > originIndex) {
+          if (j > originIndex && j <= targetIdx) {
+            // Chip j moves left to position of j - 1
+            shift = initialRects[j - 1].left - initialRects[j].left;
+          }
+        } else if (targetIdx < originIndex) {
+          if (j < originIndex && j >= targetIdx) {
+            // Chip j moves right to position of j + 1
+            const targetRight = initialRects[j + 1].right;
+            const targetLeft = targetRight - initialRects[j].width;
+            shift = targetLeft - initialRects[j].left;
+          }
+        }
+        chip.style.transform = shift === 0 ? '' : `translateX(${shift}px)`;
+      });
+    }
 
     function onSubMove(e: PointerEvent) {
-      if (!isSubDragging && Math.abs(e.clientX - subStartX) > 4) {
-        isSubDragging = true;
-      }
-      if (!isSubDragging) return;
-      const container = el.closest('.sub-tabs-strip');
-      if (!container) return;
-      const chips = container.querySelectorAll('.sub-tab-chip');
-      for (let i = 0; i < chips.length; i++) {
-        if (i === dragSubIndex) continue;
-        const rect = chips[i].getBoundingClientRect();
-        if (e.clientX >= rect.left && e.clientX <= rect.right) {
-          tabsStore.reorderSubTabs(groupId, dragSubIndex!, i);
-          dragSubIndex = i;
-          break;
+      const dx = e.clientX - startX;
+      if (!isDragging) {
+        if (Math.abs(dx) > 3) {
+          isDragging = true;
+          el.classList.add('sub-dragging');
+          document.body.style.cursor = 'grabbing';
+          chipEls.forEach((chip, idx) => {
+            if (idx !== originIndex) {
+              chip.style.transition = 'transform var(--duration-fast, 250ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1))';
+            } else {
+              chip.style.transition = 'none';
+              chip.style.zIndex = '20';
+              chip.style.pointerEvents = 'none';
+            }
+          });
+        } else {
+          return;
         }
       }
+
+      // Dragged chip directly follows pointer
+      el.style.transform = `translateX(${dx}px)`;
+
+      // Determine target slot based on current dragged center vs slot boundaries
+      const currentCenter = initialRects[originIndex].left + initialRects[originIndex].width / 2 + dx;
+      let target = 0;
+      for (let k = 0; k < initialRects.length - 1; k++) {
+        const boundary = (initialRects[k].left + initialRects[k].width / 2 + initialRects[k + 1].left + initialRects[k + 1].width / 2) / 2;
+        if (currentCenter > boundary) {
+          target = k + 1;
+        }
+      }
+      target = Math.max(0, Math.min(chipEls.length - 1, target));
+
+      if (target !== currentIndex) {
+        currentIndex = target;
+        updateDisplacements(currentIndex);
+      }
     }
 
-    function onSubUp() {
-      try { el.releasePointerCapture(pointerId); } catch (_) {}
-      el.removeEventListener('pointermove', onSubMove);
-      el.removeEventListener('pointerup', onSubUp);
+    function finishDrag() {
+      cleanupEvents();
+      if (!isDragging) {
+        resetAllChipStyles(chipEls);
+        dragSubGroupId = null;
+        dragSubIndex = null;
+        activeSubDragCleanup = null;
+        return;
+      }
+
+      justFinishedSubDrag = true;
+      setTimeout(() => { justFinishedSubDrag = false; }, 100);
+
+      // Compute resting offset for dragged chip into its target slot
+      let finalOffset = 0;
+      if (currentIndex > originIndex) {
+        const targetRight = initialRects[currentIndex].right;
+        const targetLeft = targetRight - initialRects[originIndex].width;
+        finalOffset = targetLeft - initialRects[originIndex].left;
+      } else if (currentIndex < originIndex) {
+        finalOffset = initialRects[currentIndex].left - initialRects[originIndex].left;
+      }
+
+      el.style.transition = 'transform var(--duration-quick, 180ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1))';
+      el.style.transform = `translateX(${finalOffset}px)`;
+
+      const timer = setTimeout(() => {
+        finalizeOrder();
+      }, 180);
+
+      activeSubDragCleanup = () => {
+        clearTimeout(timer);
+        finalizeOrder();
+      };
+    }
+
+    function finalizeOrder() {
+      resetAllChipStyles(chipEls);
+      if (currentIndex !== originIndex) {
+        tabsStore.reorderSubTabs(groupId, originIndex, currentIndex);
+      }
       dragSubGroupId = null;
       dragSubIndex = null;
-      isSubDragging = false;
+      activeSubDragCleanup = null;
     }
 
-    el.addEventListener('pointermove', onSubMove);
-    el.addEventListener('pointerup', onSubUp);
+    function cleanupEvents() {
+      try { el.releasePointerCapture(pointerId); } catch (_) {}
+      window.removeEventListener('pointermove', onSubMove);
+      window.removeEventListener('pointerup', finishDrag);
+      window.removeEventListener('pointercancel', finishDrag);
+      el.removeEventListener('lostpointercapture', finishDrag);
+    }
+
+    activeSubDragCleanup = () => {
+      cleanupEvents();
+      resetAllChipStyles(chipEls);
+      dragSubGroupId = null;
+      dragSubIndex = null;
+      activeSubDragCleanup = null;
+    };
+
+    window.addEventListener('pointermove', onSubMove);
+    window.addEventListener('pointerup', finishDrag);
+    window.addEventListener('pointercancel', finishDrag);
+    el.addEventListener('lostpointercapture', finishDrag);
   }
 
   // Tab drag reorder state (mouse-based, not HTML5 DnD — more reliable in Tauri WebKit)
@@ -728,6 +860,9 @@
   onkeydown={onWindowKeydownNewDoc}
   onkeyup={handleWindowKeyUp}
   onresize={onNewDocReposition}
+  onpointerup={handleGlobalPointerUp}
+  onpointercancel={handleGlobalPointerUp}
+  onblur={handleGlobalPointerUp}
 />
 
 <div class="titlebar no-select" data-tauri-drag-region
@@ -774,7 +909,12 @@
                     class:active={tab.activeSubTabId === subTab.id}
                     class:sub-dragging={dragSubIndex === subIdx && dragSubGroupId === tab.id}
                     onpointerdown={(e) => handleSubTabPointerDown(e, tab.id, subIdx)}
-                    onclick={(e) => { e.stopPropagation(); tabsStore.setActiveSubTab(tab.id, subTab.id); onSwitchTab(tab.id); }}
+                    onclick={(e) => {
+                      e.stopPropagation();
+                      if (justFinishedSubDrag) return;
+                      tabsStore.setActiveSubTab(tab.id, subTab.id);
+                      onSwitchTab(tab.id);
+                    }}
                   >
                     <span class="sub-tab-icon">
                       {#if subTab.flavor === 'typst'}
@@ -1325,9 +1465,10 @@
     box-shadow: 0 1px 3px rgba(0, 120, 212, 0.3);
   }
   .sub-tab-chip.sub-dragging {
-    opacity: 0.5;
-    cursor: grabbing;
-    transform: scale(0.96);
+    opacity: 0.92 !important;
+    cursor: grabbing !important;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2) !important;
+    z-index: 20 !important;
   }
   .sub-tab-icon {
     display: flex;
