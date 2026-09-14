@@ -335,6 +335,7 @@ ${tr('welcome.tip')}
   // Tab state for TitleBar and TabBar rendering
   let tabs = $state<import('$lib/stores/tabs-store').TabItem[]>([]);
   let activeTabId = $state('');
+  let activeGroupTab = $derived(tabs.find(t => t.id === activeTabId && t.subTabs && t.subTabs.length >= 2) ?? null);
   // Index where external tab would be inserted (-1 = hidden, >=0 = show indicator at that position)
   let externalDropIndex = $state(-1);
 
@@ -507,6 +508,10 @@ ${tr('welcome.tip')}
    *  In visual mode: serializes ProseMirror doc to markdown (avoids per-keystroke cost).
    *  In source/split mode: returns the `content` binding directly (already up-to-date). */
   function getCurrentContent(): string {
+    if (activeGroupTab) {
+      const activeSub = activeGroupTab.subTabs?.find(st => st.id === activeGroupTab.activeSubTabId) || activeGroupTab.subTabs?.[0];
+      if (activeSub) return activeSub.content;
+    }
     const mode = editorStore.getState().editorMode;
     if (mode === 'visual' && visualEditorRef) {
       return visualEditorRef.getFullMarkdown();
@@ -4465,7 +4470,77 @@ ${tr('welcome.tip')}
     {/if}
 
     <main class="editor-area">
-      {#if activeImageTab}
+      {#if activeGroupTab}
+        <!-- Multi-document Parallel Split View (2-3 files side-by-side) -->
+        <div class="parallel-editors-container">
+          {#each activeGroupTab.subTabs! as subTab, subIdx (subTab.id)}
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div
+              class="parallel-editor-pane"
+              class:active-pane={activeGroupTab.activeSubTabId === subTab.id}
+              onclick={() => tabsStore.setActiveSubTab(activeGroupTab.id, subTab.id)}
+            >
+              <div class="parallel-pane-header">
+                <div class="parallel-pane-info">
+                  <span class="pane-flavor-icon">
+                    {#if subTab.flavor === 'typst'}
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></svg>
+                    {:else}
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                    {/if}
+                  </span>
+                  <span class="pane-filename">{subTab.fileName}</span>
+                  {#if subTab.isDirty}<span class="dirty-dot"></span>{/if}
+                </div>
+                <div class="parallel-pane-actions">
+                  <button class="pane-action-btn" title="解除并列（拆分为独立标签）" onclick={(e) => { e.stopPropagation(); tabsStore.unmergeTabGroup(activeGroupTab.id); }}>
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+                  </button>
+                  <button class="pane-action-btn pane-close-btn" title="关闭该文件" onclick={(e) => { e.stopPropagation(); tabsStore.closeSubTab(activeGroupTab.id, subTab.id); }}>
+                    ×
+                  </button>
+                </div>
+              </div>
+              <div class="parallel-pane-body">
+                {#if subTab.isImage}
+                  <div class="image-preview-container">
+                    <div class="image-preview-body">
+                      {#if subTab.filePath}
+                        <img src={subTab.filePath} alt={subTab.fileName} class="image-preview-img" draggable="false" />
+                      {/if}
+                    </div>
+                  </div>
+                {:else if subTab.flavor === 'typst'}
+                  <TypstEditor
+                    bind:content={subTab.content}
+                    {editorMode}
+                    showOutline={false}
+                    readOnly={subTab.readOnly ?? false}
+                    onContentChange={(newContent) => {
+                      subTab.content = newContent;
+                      subTab.isDirty = true;
+                      tabsStore.updateSubTabContent(activeGroupTab.id, subTab.id, newContent, true);
+                    }}
+                  />
+                {:else}
+                  <Editor
+                    bind:content={subTab.content}
+                    showOutline={false}
+                    readOnly={subTab.readOnly ?? false}
+                    onNotify={showToast}
+                    onContentChange={(newContent) => {
+                      subTab.content = newContent;
+                      subTab.isDirty = true;
+                      tabsStore.updateSubTabContent(activeGroupTab.id, subTab.id, newContent, true);
+                    }}
+                  />
+                {/if}
+              </div>
+            </div>
+          {/each}
+        </div>
+      {:else if activeImageTab}
         <!-- Image tab preview (read-only) -->
         <div class="image-preview-container">
           <div class="image-preview-body">
@@ -4929,6 +5004,119 @@ ${tr('welcome.tip')}
     min-height: 0;
     overflow: hidden;
     background: var(--bg-primary);
+  }
+
+  /* Parallel / Multi-document View */
+  .parallel-editors-container {
+    display: flex;
+    flex-direction: row;
+    width: 100%;
+    height: 100%;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    background: var(--bg-primary);
+  }
+
+  .parallel-editor-pane {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    border-right: 1px solid var(--border-color);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .parallel-editor-pane:last-child {
+    border-right: none;
+  }
+
+  .parallel-pane-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 30px;
+    padding: 0 10px;
+    background: var(--bg-secondary, rgba(0, 0, 0, 0.02));
+    border-bottom: 1px solid var(--border-color);
+    font-size: var(--font-size-sm, 12px);
+    color: var(--text-secondary);
+    user-select: none;
+    flex-shrink: 0;
+  }
+
+  .parallel-editor-pane.active-pane .parallel-pane-header {
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    box-shadow: inset 0 2px 0 var(--accent-color);
+  }
+
+  .parallel-pane-info {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+
+  .pane-flavor-icon {
+    display: flex;
+    align-items: center;
+    color: var(--accent-color);
+    flex-shrink: 0;
+  }
+
+  .pane-filename {
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .parallel-pane-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+
+  .pane-action-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background var(--transition-fast), color var(--transition-fast);
+  }
+
+  .pane-action-btn:hover {
+    background: var(--bg-hover, rgba(0, 0, 0, 0.08));
+    color: var(--text-primary);
+  }
+
+  .pane-close-btn {
+    font-size: 14px;
+    line-height: 1;
+  }
+
+  .parallel-pane-body {
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    height: calc(100% - 30px);
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
   }
 
   /* Split mode: golden ratio 38.2% source, 61.8% visual */

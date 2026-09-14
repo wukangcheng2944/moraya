@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import { editorStore } from '../stores/editor-store';
-  import type { TabItem } from '../stores/tabs-store';
+  import { tabsStore, type TabItem } from '../stores/tabs-store';
   import { t } from '$lib/i18n';
   import { isTauri, isMacOS } from '$lib/utils/platform';
   import { getCurrentWindow, LogicalPosition, type Window as TauriWindow } from '@tauri-apps/api/window';
@@ -68,6 +68,7 @@
     if (event.button !== 0) return; // Only left mouse button
     if ((event.target as HTMLElement).closest('button')) return;
     if ((event.target as HTMLElement).closest('.tab-item')) return;
+    if ((event.target as HTMLElement).closest('.tab-group')) return;
     // Skip drag on double-click (detail >= 2): macOS startDragging() handles
     // double-click-to-maximize natively, and our ondblclick handler also calls
     // toggleMaximize — triggering both would double-toggle (maximize then restore).
@@ -78,6 +79,7 @@
   function handleDblClick(event: MouseEvent) {
     if ((event.target as HTMLElement).closest('button')) return;
     if ((event.target as HTMLElement).closest('.tab-item')) return;
+    if ((event.target as HTMLElement).closest('.tab-group')) return;
     // On macOS, startDragging() already handles double-click-to-maximize natively.
     // Only call toggleMaximize on non-macOS platforms.
     if (!isMacOS) {
@@ -90,12 +92,81 @@
   const unsubEditor = editorStore.subscribe(state => {
     isDirty = state.isDirty;
   });
-  onDestroy(() => { unsubEditor(); });
+  onDestroy(() => {
+    unsubEditor();
+    if (mergeTimer) clearTimeout(mergeTimer);
+  });
 
   let displayTitle = $derived(isDirty ? `${title} - ${$t('titlebar.unsaved')}` : title);
 
   // Whether to show inline tabs (when tabs exist)
   let showInlineTabs = $derived(tabs.length > 0);
+
+  // Ctrl + Click multi-selection state (2-3 tabs)
+  let selectedTabIds = $state<string[]>([]);
+
+  function handleWindowKeyUp(e: KeyboardEvent) {
+    if (e.key === 'Control' || e.key === 'Meta') {
+      if (selectedTabIds.length >= 2 && selectedTabIds.length <= 3) {
+        tabsStore.mergeTabs(selectedTabIds);
+      }
+      selectedTabIds = [];
+    }
+  }
+
+  // Merge hover state (center 40% threshold with 500ms delay)
+  let mergeTargetIndex = $state<number | null>(null);
+  let mergeTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // Sub-tab internal drag state
+  let dragSubGroupId = $state<string | null>(null);
+  let dragSubIndex = $state<number | null>(null);
+  let subStartX = 0;
+  let isSubDragging = false;
+
+  function handleSubTabPointerDown(event: PointerEvent, groupId: string, subIndex: number) {
+    if (event.button !== 0) return;
+    if ((event.target as HTMLElement).closest('.sub-tab-close')) return;
+    event.stopPropagation();
+    subStartX = event.clientX;
+    isSubDragging = false;
+    dragSubGroupId = groupId;
+    dragSubIndex = subIndex;
+    const el = event.currentTarget as HTMLElement;
+    const pointerId = event.pointerId;
+    el.setPointerCapture(pointerId);
+
+    function onSubMove(e: PointerEvent) {
+      if (!isSubDragging && Math.abs(e.clientX - subStartX) > 4) {
+        isSubDragging = true;
+      }
+      if (!isSubDragging) return;
+      const container = el.closest('.sub-tabs-strip');
+      if (!container) return;
+      const chips = container.querySelectorAll('.sub-tab-chip');
+      for (let i = 0; i < chips.length; i++) {
+        if (i === dragSubIndex) continue;
+        const rect = chips[i].getBoundingClientRect();
+        if (e.clientX >= rect.left && e.clientX <= rect.right) {
+          tabsStore.reorderSubTabs(groupId, dragSubIndex!, i);
+          dragSubIndex = i;
+          break;
+        }
+      }
+    }
+
+    function onSubUp() {
+      try { el.releasePointerCapture(pointerId); } catch (_) {}
+      el.removeEventListener('pointermove', onSubMove);
+      el.removeEventListener('pointerup', onSubUp);
+      dragSubGroupId = null;
+      dragSubIndex = null;
+      isSubDragging = false;
+    }
+
+    el.addEventListener('pointermove', onSubMove);
+    el.addEventListener('pointerup', onSubUp);
+  }
 
   // Tab drag reorder state (mouse-based, not HTML5 DnD — more reliable in Tauri WebKit)
   let dragTabIndex = $state<number | null>(null);
@@ -123,8 +194,27 @@
 
   function handleTabPointerDown(event: PointerEvent, index: number) {
     if (event.button !== 0) return;
-    // Don't start drag on close button
-    if ((event.target as HTMLElement).closest('.tab-close')) return;
+    // Don't start drag on close button, unmerge button or sub-tab-chip
+    if ((event.target as HTMLElement).closest('.tab-close') ||
+        (event.target as HTMLElement).closest('.group-unmerge-btn') ||
+        (event.target as HTMLElement).closest('.sub-tab-chip')) return;
+
+    // Ctrl / Meta + Click multi-selection (2-3 tabs)
+    if (event.ctrlKey || event.metaKey) {
+      const tab = tabs[index];
+      if (tab) {
+        if (selectedTabIds.includes(tab.id)) {
+          selectedTabIds = selectedTabIds.filter(id => id !== tab.id);
+        } else if (selectedTabIds.length < 3) {
+          selectedTabIds = [...selectedTabIds, tab.id];
+        }
+      }
+      return;
+    }
+    if (selectedTabIds.length > 0 && !selectedTabIds.includes(tabs[index]?.id)) {
+      selectedTabIds = [];
+    }
+
     dragStartX = event.clientX;
     isDragging = false;
     isDetaching = false;
@@ -279,18 +369,58 @@
         invoke('set_window_alpha', { label: appWindow.label, alpha: 1 }).catch(() => {});
       }
 
-      // Normal intra-window reorder
-      const tabEls = macScrollEl?.querySelectorAll('.tab-item');
+      // Normal intra-window reorder or merge
+      const tabEls = macScrollEl?.querySelectorAll('.tab-entry');
       if (!tabEls) return;
       let target: number | null = null;
+      let hoveringCenter = false;
+      let centerTargetIdx: number | null = null;
+
       for (let i = 0; i < tabEls.length; i++) {
         const rect = tabEls[i].getBoundingClientRect();
         if (e.clientX >= rect.left && e.clientX < rect.right) {
           target = i;
+          if (i !== index) {
+            const centerLeft = rect.left + rect.width * 0.3;
+            const centerRight = rect.left + rect.width * 0.7;
+            if (e.clientX >= centerLeft && e.clientX <= centerRight) {
+              hoveringCenter = true;
+              centerTargetIdx = i;
+            }
+          }
           break;
         }
       }
       dropTargetIndex = target;
+
+      if (hoveringCenter && centerTargetIdx !== null) {
+        if (mergeTargetIndex !== centerTargetIdx) {
+          mergeTargetIndex = centerTargetIdx;
+          if (mergeTimer) clearTimeout(mergeTimer);
+          const fromIdx = index;
+          const toIdx = centerTargetIdx;
+          mergeTimer = setTimeout(() => {
+            const tabA = tabs[fromIdx];
+            const tabB = tabs[toIdx];
+            if (tabA && tabB) {
+              tabsStore.mergeTabs([tabA.id, tabB.id]);
+            }
+            mergeTargetIndex = null;
+            mergeTimer = null;
+            document.body.style.cursor = '';
+            dragTabIndex = null;
+            dropTargetIndex = null;
+            isDragging = false;
+            try { el.releasePointerCapture(pointerId); } catch (_) {}
+          }, 500);
+        }
+      } else {
+        if (mergeTimer) {
+          clearTimeout(mergeTimer);
+          mergeTimer = null;
+        }
+        mergeTargetIndex = null;
+      }
     }
 
     /** Handle pointer moves after a multi-tab detach: move the new window, detect re-attach targets */
@@ -405,6 +535,12 @@
       const savedCachedBounds = cachedBounds;
       const savedDropTargetIndex = dropTargetIndex;
       const savedSingleTabHidden = singleTabHidden;
+      if (mergeTimer) {
+        clearTimeout(mergeTimer);
+        mergeTimer = null;
+      }
+      const savedMergeTarget = mergeTargetIndex;
+      mergeTargetIndex = null;
 
       // Reset drag state immediately so a new drag can start cleanly
       document.body.style.cursor = '';
@@ -441,6 +577,12 @@
         } else if (savedCrossTarget) {
           // Single-tab or pre-detach attach
           await onAttachTab(savedDragTabIndex, savedCrossTarget);
+        } else if (savedMergeTarget !== null && savedDragTabIndex !== savedMergeTarget) {
+          const tabA = tabs[savedDragTabIndex];
+          const tabB = tabs[savedMergeTarget];
+          if (tabA && tabB) {
+            tabsStore.mergeTabs([tabA.id, tabB.id]);
+          }
         } else if (savedDropTargetIndex !== null && savedDragTabIndex !== savedDropTargetIndex) {
           onReorderTabs(savedDragTabIndex, savedDropTargetIndex);
         }
@@ -584,6 +726,7 @@
 <svelte:window
   onclick={onWindowClickNewDoc}
   onkeydown={onWindowKeydownNewDoc}
+  onkeyup={handleWindowKeyUp}
   onresize={onNewDocReposition}
 />
 
@@ -607,30 +750,99 @@
           {#if externalDropIndex === index}
             <div class="external-drop-indicator"></div>
           {/if}
-          <!-- svelte-ignore a11y_consider_explicit_label -->
-          <button class="tab-item" class:active={tab.id === activeTabId}
-            class:typst={tab.flavor === 'typst'}
-            class:drag-over={dropTargetIndex === index && dragTabIndex !== index}
-            class:dragging={dragTabIndex === index}
-            class:detaching={isDetaching && dragTabIndex === index}
-            onclick={() => { if (!isDragging) onSwitchTab(tab.id); }}
-            onauxclick={(e) => { if (e.button === 1) { e.preventDefault(); handleTabClose(e, tab); } }}
-            onpointerdown={(e) => handleTabPointerDown(e, index)}>
-            <span class="tab-icon">
-              {#if tab.flavor === 'typst'}
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></svg>
-              {:else}
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-              {/if}
-            </span>
-            <span class="tab-name">
-              {#if tab.isDirty}<span class="dirty-dot"></span>{/if}
-              {#if tab.readOnly}<svg class="readonly-lock" width="9" height="10" viewBox="0 0 10 12" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true"><rect x="1.5" y="5" width="7" height="6" rx="1"/><path d="M3 5V3.5a2 2 0 0 1 4 0V5"/></svg>{/if}
-              {tab.fileName}
-            </span>
-            <span class="tab-close" role="button" tabindex="-1"
-              onclick={(e) => handleTabClose(e, tab)}>×</span>
-          </button>
+          {#if tab.subTabs && tab.subTabs.length >= 2}
+            <!-- Tab Group (Big Tab / 大标签) -->
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div class="tab-group tab-entry"
+              class:active={tab.id === activeTabId}
+              class:ctrl-selected={selectedTabIds.includes(tab.id)}
+              class:merge-hover={mergeTargetIndex === index}
+              class:drag-over={dropTargetIndex === index && dragTabIndex !== index}
+              class:dragging={dragTabIndex === index}
+              class:detaching={isDetaching && dragTabIndex === index}
+              onclick={() => { if (!isDragging) onSwitchTab(tab.id); }}
+              onauxclick={(e) => { if (e.button === 1) { e.preventDefault(); handleTabClose(e, tab); } }}
+              onpointerdown={(e) => handleTabPointerDown(e, index)}>
+              <span class="group-icon" title="并列文档组">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="3" x2="12" y2="21"/></svg>
+              </span>
+              <div class="sub-tabs-strip">
+                {#each tab.subTabs as subTab, subIdx (subTab.id)}
+                  <div
+                    class="sub-tab-chip"
+                    class:active={tab.activeSubTabId === subTab.id}
+                    class:sub-dragging={dragSubIndex === subIdx && dragSubGroupId === tab.id}
+                    onpointerdown={(e) => handleSubTabPointerDown(e, tab.id, subIdx)}
+                    onclick={(e) => { e.stopPropagation(); tabsStore.setActiveSubTab(tab.id, subTab.id); onSwitchTab(tab.id); }}
+                  >
+                    <span class="sub-tab-icon">
+                      {#if subTab.flavor === 'typst'}
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></svg>
+                      {:else}
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                      {/if}
+                    </span>
+                    <span class="sub-tab-name">
+                      {#if subTab.isDirty}<span class="dirty-dot"></span>{/if}
+                      {subTab.fileName}
+                    </span>
+                    <span
+                      class="sub-tab-close"
+                      role="button"
+                      tabindex="-1"
+                      title="关闭该文件"
+                      onclick={(e) => { e.stopPropagation(); tabsStore.closeSubTab(tab.id, subTab.id); }}
+                    >×</span>
+                  </div>
+                {/each}
+              </div>
+              <span
+                class="group-unmerge-btn"
+                role="button"
+                tabindex="-1"
+                title="解除并列（拆分为独立标签）"
+                onclick={(e) => { e.stopPropagation(); tabsStore.unmergeTabGroup(tab.id); }}
+              >
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+              </span>
+              <span
+                class="tab-close"
+                role="button"
+                tabindex="-1"
+                title="关闭并列组"
+                onclick={(e) => handleTabClose(e, tab)}
+              >×</span>
+            </div>
+          {:else}
+            <!-- Standard single tab -->
+            <!-- svelte-ignore a11y_consider_explicit_label -->
+            <button class="tab-item tab-entry" class:active={tab.id === activeTabId}
+              class:typst={tab.flavor === 'typst'}
+              class:ctrl-selected={selectedTabIds.includes(tab.id)}
+              class:merge-hover={mergeTargetIndex === index}
+              class:drag-over={dropTargetIndex === index && dragTabIndex !== index}
+              class:dragging={dragTabIndex === index}
+              class:detaching={isDetaching && dragTabIndex === index}
+              onclick={() => { if (!isDragging) onSwitchTab(tab.id); }}
+              onauxclick={(e) => { if (e.button === 1) { e.preventDefault(); handleTabClose(e, tab); } }}
+              onpointerdown={(e) => handleTabPointerDown(e, index)}>
+              <span class="tab-icon">
+                {#if tab.flavor === 'typst'}
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></svg>
+                {:else}
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                {/if}
+              </span>
+              <span class="tab-name">
+                {#if tab.isDirty}<span class="dirty-dot"></span>{/if}
+                {#if tab.readOnly}<svg class="readonly-lock" width="9" height="10" viewBox="0 0 10 12" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true"><rect x="1.5" y="5" width="7" height="6" rx="1"/><path d="M3 5V3.5a2 2 0 0 1 4 0V5"/></svg>{/if}
+                {tab.fileName}
+              </span>
+              <span class="tab-close" role="button" tabindex="-1"
+                onclick={(e) => handleTabClose(e, tab)}>×</span>
+            </button>
+          {/if}
         {/each}
         {#if externalDropIndex >= tabs.length}
           <div class="external-drop-indicator"></div>
@@ -949,6 +1161,177 @@
     pointer-events: auto;
   }
   .tab-close:hover {
+    background: var(--bg-hover, rgba(0, 0, 0, 0.08));
+    color: var(--text-primary);
+  }
+
+  /* Multi-select and Drag Hover Center 40% Merge Indicator */
+  .tab-entry.ctrl-selected {
+    outline: 2px solid var(--accent-color, #0078d4) !important;
+    outline-offset: -2px !important;
+    background: rgba(0, 120, 212, 0.1) !important;
+  }
+  .tab-entry.merge-hover {
+    outline: 2px dashed var(--accent-color, #0078d4) !important;
+    outline-offset: -2px !important;
+    background: rgba(0, 120, 212, 0.15) !important;
+    animation: pulse-merge 0.5s infinite alternate;
+  }
+  @keyframes pulse-merge {
+    from { transform: scale(0.98); }
+    to { transform: scale(1.02); }
+  }
+
+  /* Tab Group (Composite Big Tab) */
+  .tab-group {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    height: 34px;
+    padding: 0 0.4rem 0 0.5rem;
+    min-width: 140px;
+    max-width: 440px;
+    flex-shrink: 0;
+    border: 1px solid transparent;
+    border-bottom: none;
+    border-radius: 8px 8px 0 0;
+    background: rgba(0, 0, 0, 0.025);
+    color: var(--text-secondary, #505050);
+    font-size: var(--font-size-sm, 12px);
+    cursor: pointer;
+    -webkit-app-region: no-drag;
+    position: relative;
+    transition: background var(--transition-fast), color var(--transition-fast);
+  }
+  .tab-group:hover {
+    background: rgba(0, 0, 0, 0.05);
+    color: var(--text-primary);
+  }
+  .tab-group.active {
+    background: var(--bg-primary, #ffffff);
+    color: var(--text-primary, #111111);
+    font-weight: 500;
+    border: 1px solid var(--border-light, #e0e0e0);
+    border-bottom: 1px solid var(--bg-primary, #ffffff);
+    margin-bottom: -1px;
+    z-index: 2;
+  }
+  .tab-group.dragging {
+    opacity: 0.4;
+  }
+  .tab-group.drag-over {
+    border-left: 2px solid var(--accent-color);
+  }
+  .tab-group .tab-close {
+    opacity: 0;
+    pointer-events: none;
+  }
+  .tab-group:hover .tab-close,
+  .tab-group.active .tab-close {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .group-icon {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    color: var(--accent-color, #0078d4);
+  }
+  .sub-tabs-strip {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    flex: 1;
+    min-width: 0;
+  }
+  .sub-tabs-strip::-webkit-scrollbar {
+    display: none;
+  }
+  .sub-tab-chip {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    height: 22px;
+    padding: 0 5px;
+    background: rgba(0, 0, 0, 0.05);
+    border-radius: 4px;
+    font-size: 11px;
+    color: var(--text-secondary);
+    cursor: grab;
+    flex-shrink: 0;
+    max-width: 110px;
+    user-select: none;
+    transition: background var(--transition-fast), color var(--transition-fast);
+  }
+  .sub-tab-chip:hover {
+    background: rgba(0, 0, 0, 0.09);
+    color: var(--text-primary);
+  }
+  .sub-tab-chip.active {
+    background: var(--accent-color, #0078d4);
+    color: #ffffff;
+    font-weight: 500;
+  }
+  .sub-tab-chip.sub-dragging {
+    opacity: 0.5;
+    cursor: grabbing;
+  }
+  .sub-tab-icon {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+  }
+  .sub-tab-name {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .sub-tab-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    font-size: 11px;
+    line-height: 1;
+    color: inherit;
+    opacity: 0.6;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .sub-tab-close:hover {
+    opacity: 1;
+    background: rgba(0, 0, 0, 0.15);
+  }
+  .sub-tab-chip.active .sub-tab-close:hover {
+    background: rgba(255, 255, 255, 0.25);
+  }
+  .group-unmerge-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 4px;
+    color: var(--text-muted);
+    cursor: pointer;
+    flex-shrink: 0;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s, background var(--transition-fast), color var(--transition-fast);
+  }
+  .tab-group:hover .group-unmerge-btn,
+  .tab-group.active .group-unmerge-btn {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .group-unmerge-btn:hover {
     background: var(--bg-hover, rgba(0, 0, 0, 0.08));
     color: var(--text-primary);
   }

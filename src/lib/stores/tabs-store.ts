@@ -26,6 +26,10 @@ export interface TabItem {
    *  a document is edited as EITHER markdown or Typst, never both). Detected by
    *  the `.typ` file extension at open time. */
   flavor?: 'markdown' | 'typst';
+  /** If this tab is a composite Tab Group (大标签), subTabs contains the 2-3 tabs */
+  subTabs?: TabItem[];
+  /** For a sub-tab in a group, which subTab is currently focused */
+  activeSubTabId?: string;
 }
 
 interface TabsState {
@@ -87,18 +91,37 @@ function createTabsStore() {
     const content = liveContent ? liveContent() : edState.content;
     update(state => ({
       ...state,
-      tabs: state.tabs.map(tab =>
-        tab.id === state.activeTabId
-          ? {
-              ...tab,
-              content,
-              isDirty: edState.isDirty,
-              filePath: edState.currentFilePath,
-              cursorOffset: edState.cursorOffset,
-              scrollFraction: edState.scrollFraction,
-            }
-          : tab
-      ),
+      tabs: state.tabs.map(tab => {
+        if (tab.id !== state.activeTabId) return tab;
+        if (tab.subTabs && tab.subTabs.length >= 2) {
+          const activeSubId = tab.activeSubTabId || tab.subTabs[0].id;
+          const updatedSubTabs = tab.subTabs.map(st =>
+            st.id === activeSubId
+              ? {
+                  ...st,
+                  content,
+                  isDirty: edState.isDirty,
+                  filePath: edState.currentFilePath,
+                  cursorOffset: edState.cursorOffset,
+                  scrollFraction: edState.scrollFraction,
+                }
+              : st
+          );
+          return {
+            ...tab,
+            subTabs: updatedSubTabs,
+            isDirty: updatedSubTabs.some(st => st.isDirty),
+          };
+        }
+        return {
+          ...tab,
+          content,
+          isDirty: edState.isDirty,
+          filePath: edState.currentFilePath,
+          cursorOffset: edState.cursorOffset,
+          scrollFraction: edState.scrollFraction,
+        };
+      }),
     }));
     // Keep the mirror honest for every other reader of editorStore.content.
     if (content !== edState.content) editorStore.setContent(content);
@@ -109,12 +132,16 @@ function createTabsStore() {
    *  Image tabs have no editor state — skip. */
   function syncToEditor(tab: TabItem) {
     if (tab.isImage) return;
+    const target = (tab.subTabs && tab.subTabs.length >= 2)
+      ? (tab.subTabs.find(st => st.id === tab.activeSubTabId) || tab.subTabs[0])
+      : tab;
+    if (target.isImage) return;
     editorStore.batchRestore({
-      filePath: tab.filePath,
-      content: tab.content,
-      isDirty: tab.isDirty,
-      cursorOffset: tab.cursorOffset,
-      scrollFraction: tab.scrollFraction,
+      filePath: target.filePath,
+      content: target.content,
+      isDirty: target.isDirty,
+      cursorOffset: target.cursorOffset,
+      scrollFraction: target.scrollFraction,
     });
   }
 
@@ -315,11 +342,24 @@ function createTabsStore() {
     updateActiveFile(filePath: string, fileName: string, mtime?: number | null) {
       update(state => ({
         ...state,
-        tabs: state.tabs.map(tab =>
-          tab.id === state.activeTabId
-            ? { ...tab, filePath, fileName, isDirty: false, lastMtime: mtime ?? tab.lastMtime }
-            : tab
-        ),
+        tabs: state.tabs.map(tab => {
+          if (tab.id !== state.activeTabId) return tab;
+          if (tab.subTabs && tab.subTabs.length >= 2) {
+            const activeSubId = tab.activeSubTabId || tab.subTabs[0].id;
+            const updatedSubTabs = tab.subTabs.map(st =>
+              st.id === activeSubId
+                ? { ...st, filePath, fileName, isDirty: false, lastMtime: mtime ?? st.lastMtime }
+                : st
+            );
+            return {
+              ...tab,
+              subTabs: updatedSubTabs,
+              fileName: updatedSubTabs.map(t => t.fileName).join(' | '),
+              isDirty: updatedSubTabs.some(t => t.isDirty),
+            };
+          }
+          return { ...tab, filePath, fileName, isDirty: false, lastMtime: mtime ?? tab.lastMtime };
+        }),
       }));
     },
 
@@ -413,6 +453,193 @@ function createTabsStore() {
         tabs.splice(toIndex, 0, moved);
         return { ...state, tabs };
       });
+    },
+
+    /** Merge 2 to 3 tabs into a composite Tab Group */
+    mergeTabs(tabIds: string[]) {
+      if (!tabIds || tabIds.length < 2) return;
+      syncFromEditor();
+      update(state => {
+        // Collect matching tabs in their original order in state.tabs
+        const matched: TabItem[] = [];
+        let firstIndex = -1;
+        for (let i = 0; i < state.tabs.length; i++) {
+          const t = state.tabs[i];
+          if (tabIds.includes(t.id)) {
+            if (firstIndex === -1) firstIndex = i;
+            if (t.subTabs && t.subTabs.length >= 2) {
+              matched.push(...t.subTabs);
+            } else {
+              matched.push(t);
+            }
+          }
+        }
+        // Limit to max 3 tabs
+        const toMerge = matched.slice(0, 3);
+        if (toMerge.length < 2) return state;
+
+        const groupTab: TabItem = {
+          id: generateTabId(),
+          filePath: toMerge[0].filePath,
+          fileName: toMerge.map(t => t.fileName).join(' | '),
+          content: toMerge[0].content,
+          isDirty: toMerge.some(t => t.isDirty),
+          cursorOffset: toMerge[0].cursorOffset,
+          scrollFraction: toMerge[0].scrollFraction,
+          lastMtime: toMerge[0].lastMtime,
+          flavor: toMerge[0].flavor,
+          subTabs: toMerge.map(t => ({ ...t })),
+          activeSubTabId: toMerge[0].id,
+        };
+
+        const remaining = state.tabs.filter(t => !tabIds.includes(t.id));
+        const insertAt = Math.min(firstIndex >= 0 ? firstIndex : 0, remaining.length);
+        remaining.splice(insertAt, 0, groupTab);
+
+        syncToEditor(toMerge[0]);
+        return {
+          tabs: remaining,
+          activeTabId: groupTab.id,
+        };
+      });
+    },
+
+    /** Reorder sub-tabs inside a Tab Group */
+    reorderSubTabs(groupId: string, fromIndex: number, toIndex: number) {
+      if (fromIndex === toIndex) return;
+      update(state => ({
+        ...state,
+        tabs: state.tabs.map(tab => {
+          if (tab.id !== groupId || !tab.subTabs) return tab;
+          const subTabs = [...tab.subTabs];
+          const [moved] = subTabs.splice(fromIndex, 1);
+          subTabs.splice(toIndex, 0, moved);
+          return {
+            ...tab,
+            subTabs,
+            fileName: subTabs.map(t => t.fileName).join(' | '),
+          };
+        }),
+      }));
+    },
+
+    /** Unmerge a Tab Group back into individual tabs */
+    unmergeTabGroup(groupId: string) {
+      syncFromEditor();
+      update(state => {
+        const groupIdx = state.tabs.findIndex(t => t.id === groupId);
+        if (groupIdx === -1) return state;
+        const group = state.tabs[groupIdx];
+        if (!group.subTabs || group.subTabs.length < 2) return state;
+
+        const subTabs = group.subTabs;
+        const activeSubId = group.activeSubTabId || subTabs[0].id;
+        const newTabs = [...state.tabs];
+        newTabs.splice(groupIdx, 1, ...subTabs);
+
+        const nextActive = subTabs.find(st => st.id === activeSubId) || subTabs[0];
+        syncToEditor(nextActive);
+        return {
+          tabs: newTabs,
+          activeTabId: nextActive.id,
+        };
+      });
+    },
+
+    /** Close a sub-tab inside a Tab Group */
+    closeSubTab(groupId: string, subTabId: string) {
+      update(state => {
+        const groupIdx = state.tabs.findIndex(t => t.id === groupId);
+        if (groupIdx === -1) return state;
+        const group = state.tabs[groupIdx];
+        if (!group.subTabs) return state;
+
+        const remaining = group.subTabs.filter(st => st.id !== subTabId);
+        if (remaining.length === 0) {
+          // No tabs left, close the whole group
+          const newTabs = state.tabs.filter(t => t.id !== groupId);
+          if (newTabs.length === 0) {
+            const fallback: TabItem = {
+              id: generateTabId(),
+              filePath: null,
+              fileName: 'Untitled',
+              content: '',
+              isDirty: false,
+              cursorOffset: 0,
+              scrollFraction: 0,
+              lastMtime: null,
+            };
+            syncToEditor(fallback);
+            return { tabs: [fallback], activeTabId: fallback.id };
+          }
+          const nextActive = newTabs[Math.max(0, groupIdx - 1)];
+          syncToEditor(nextActive);
+          return { tabs: newTabs, activeTabId: nextActive.id };
+        }
+
+        if (remaining.length === 1) {
+          // Degrade to single regular tab
+          const single = remaining[0];
+          const newTabs = [...state.tabs];
+          newTabs[groupIdx] = single;
+          if (state.activeTabId === groupId) {
+            syncToEditor(single);
+            return { tabs: newTabs, activeTabId: single.id };
+          }
+          return { ...state, tabs: newTabs };
+        }
+
+        // 2 sub-tabs remaining
+        const nextActiveSubId = group.activeSubTabId === subTabId ? remaining[0].id : group.activeSubTabId;
+        const updatedGroup: TabItem = {
+          ...group,
+          subTabs: remaining,
+          fileName: remaining.map(t => t.fileName).join(' | '),
+          isDirty: remaining.some(t => t.isDirty),
+          activeSubTabId: nextActiveSubId,
+        };
+        const newTabs = [...state.tabs];
+        newTabs[groupIdx] = updatedGroup;
+        if (state.activeTabId === groupId) {
+          const focused = remaining.find(st => st.id === nextActiveSubId) || remaining[0];
+          syncToEditor(focused);
+        }
+        return { ...state, tabs: newTabs };
+      });
+    },
+
+    /** Set active sub-tab within a group */
+    setActiveSubTab(groupId: string, subTabId: string) {
+      const s = get({ subscribe });
+      const group = s.tabs.find(t => t.id === groupId);
+      if (!group?.subTabs) return;
+      const sub = group.subTabs.find(st => st.id === subTabId);
+      if (!sub) return;
+      update(state => ({
+        ...state,
+        tabs: state.tabs.map(tab =>
+          tab.id === groupId ? { ...tab, activeSubTabId: subTabId } : tab
+        ),
+      }));
+      syncToEditor(sub);
+    },
+
+    /** Update a specific sub-tab's content and dirty state */
+    updateSubTabContent(groupId: string, subTabId: string, content: string, isDirty: boolean) {
+      update(state => ({
+        ...state,
+        tabs: state.tabs.map(tab => {
+          if (tab.id !== groupId || !tab.subTabs) return tab;
+          const updatedSubTabs = tab.subTabs.map(st =>
+            st.id === subTabId ? { ...st, content, isDirty } : st
+          );
+          return {
+            ...tab,
+            subTabs: updatedSubTabs,
+            isDirty: updatedSubTabs.some(st => st.isDirty),
+          };
+        }),
+      }));
     },
 
     /**
