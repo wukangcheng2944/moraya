@@ -325,6 +325,40 @@
     return lineHeights.length === 0 ? null : cumulativeLineOffsets(lineHeights);
   }
 
+  /**
+   * The 0-based source line currently at the top of the viewport, and how far
+   * the viewport has scrolled past its top.
+   *
+   * Used to keep the reader's place when the file is reloaded from disk
+   * (issue #92). Returns null before the ghost has been measured, which is the
+   * honest answer — a guess would move the reader for no reason.
+   */
+  export function getTopVisibleLine(): { line: number; offsetWithinLine: number } | null {
+    const outer = textareaEl?.closest('.source-editor-outer') as HTMLElement | null;
+    const offsets = getLineOffsets();
+    if (!outer || !offsets || !textareaEl) return null;
+    // scrollTop is measured against the scroll box; the textarea starts below
+    // whatever padding the pane carries.
+    const textTop = textareaEl.offsetTop;
+    const y = Math.max(0, outer.scrollTop - textTop);
+    // Last offset that is still at or above the viewport top.
+    let line = 0;
+    for (let i = 0; i < offsets.length - 1; i++) {
+      if ((offsets[i] ?? 0) <= y) line = i;
+      else break;
+    }
+    return { line, offsetWithinLine: y - (offsets[line] ?? 0) };
+  }
+
+  /** Scroll so `line` sits at the top of the viewport. Counterpart of the above. */
+  export function scrollToLine(line: number, offsetWithinLine = 0): void {
+    const outer = textareaEl?.closest('.source-editor-outer') as HTMLElement | null;
+    const offsets = getLineOffsets();
+    if (!outer || !offsets || !textareaEl) return;
+    const clamped = Math.max(0, Math.min(line, offsets.length - 1));
+    outer.scrollTo(0, textareaEl.offsetTop + (offsets[clamped] ?? 0) + offsetWithinLine);
+  }
+
   export function setHighlightLine(lineIndex: number) {
     if (!ghostEl || !ghostEl.children.length) return;
     if (lineIndex < 0 || lineIndex >= ghostEl.children.length - 1) return;

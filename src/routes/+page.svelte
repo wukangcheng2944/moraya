@@ -56,7 +56,8 @@
   import { registerKbInterval, clearAllIntervals, runSync, kbSyncStore } from '$lib/services/kb-sync/sync-service';
   import type { KbSyncState } from '$lib/services/kb-sync/types';
   import { snapshotVersion, isVersionedPath } from '$lib/services/version-history';
-  import { shouldAutoSave, lastEditTime, noteEdit } from '$lib/utils/autosave';
+  import { shouldAutoSave, autoSaveTickMs, lastEditTime, noteEdit } from '$lib/utils/autosave';
+  import { captureAnchor, locateAnchor } from '$lib/editor/reading-anchor';
   import { lineOffsetAt } from '$lib/editor/line-metrics';
   import { preloadEnhancementPlugins } from '$lib/editor/setup';
   import { openFile, saveFile, saveFileAs, loadFile, getFileNameFromPath, readImageAsBlobUrl, migrateTempImages, isImageFile } from '$lib/services/file-service';
@@ -533,6 +534,48 @@ ${tr('welcome.tip')}
     document.querySelector('.source-editor-outer')?.scrollTo(0, 0);
   }
 
+  /**
+   * Replace the active document's content IN PLACE, keeping the reader where
+   * they were (issue #92).
+   *
+   * For a file reloaded from disk — an AI agent editing alongside you, another
+   * editor, a `git checkout` — jumping to the top is wrong: nothing about the
+   * reader's intent changed, only the bytes. The position is re-found by the
+   * text that was at the top of the viewport rather than by pixel offset,
+   * because an edit above the fold moves every offset (see reading-anchor.ts).
+   *
+   * Falls back to leaving the scroll alone when the document has changed past
+   * recognition — never to scrolling to the top, which is the behaviour being
+   * fixed.
+   */
+  async function replaceContentKeepingPlace(newContent: string, previousContent: string) {
+    const mode = editorStore.getState().editorMode;
+    const sourceRef = mode === 'source' ? sourceEditorRef : mode === 'split' ? splitSourceRef : undefined;
+    const visualRef = mode === 'visual' ? visualEditorRef : mode === 'split' ? splitVisualRef : undefined;
+
+    // Captured BEFORE the swap, against the text that produced what is on
+    // screen — hence `previousContent` rather than the already-reassigned
+    // `content`.
+    const top = sourceRef?.getTopVisibleLine?.() ?? null;
+    const sourceAnchor = top
+      ? captureAnchor(previousContent, top.line, top.offsetWithinLine)
+      : null;
+    const visualAnchor = visualRef?.getReadingAnchor?.() ?? null;
+
+    syncVisualEditor(newContent);
+    await tick();
+
+    if (sourceAnchor && sourceRef?.scrollToLine) {
+      const line = locateAnchor(newContent, sourceAnchor);
+      if (line !== null) sourceRef.scrollToLine(line, sourceAnchor.offsetWithinLine);
+    }
+    // The visual editor re-renders asynchronously after syncContent; one more
+    // frame lets the new blocks land before their rects are measured.
+    if (visualAnchor && visualRef?.restoreReadingAnchor) {
+      requestAnimationFrame(() => visualRef.restoreReadingAnchor?.(visualAnchor));
+    }
+  }
+
   /** Replace editor content and scroll to the top for a newly opened file. */
   async function replaceContentAndScrollToTop(newContent: string) {
     const mySerial = fileSelectSerial;
@@ -904,7 +947,7 @@ ${tr('welcome.tip')}
     // Rebuild the autosave ticker when its settings change (previously a
     // toggle only took effect after an app restart). prev-value key guard
     // keeps this hot subscriber a no-op on unrelated updates.
-    const autoSaveKey = `${state.autoSave}|${state.autoSaveMaxMinutes}|${state.autoSaveIdleMinutes}`;
+    const autoSaveKey = `${state.autoSave}|${state.autoSaveMaxSeconds}|${state.autoSaveIdleSeconds}`;
     if (autoSaveKey !== prevAutoSaveKey) {
       const isFirstRun = prevAutoSaveKey === '';
       prevAutoSaveKey = autoSaveKey;
@@ -1419,10 +1462,11 @@ ${tr('welcome.tip')}
   });
 
   // Auto-save (v1.21.0): dual-condition scheduler — force-save pending edits
-  // after autoSaveMaxMinutes, or once input pauses for autoSaveIdleMinutes.
-  // A coarse 15s ticker polls the pure shouldAutoSave() decision; edit
-  // timestamps are tracked in the editorStore subscriber above.
-  const AUTOSAVE_TICK_MS = 15_000;
+  // after autoSaveMaxSeconds, or once input pauses for autoSaveIdleSeconds.
+  // A ticker polls the pure shouldAutoSave() decision; edit timestamps are
+  // tracked in the editorStore subscriber above. The tick rate follows the
+  // settings (autoSaveTickMs) — a fixed 15s poll cannot honour the
+  // sub-minute intervals issue #91 asked for.
   let autoSaveTimer: ReturnType<typeof setInterval> | null = null;
   // KB sync trash purge timer (v0.68.0) — purge entries older than 7 days
   let trashPurgeTimer: ReturnType<typeof setInterval> | null = null;
@@ -1437,12 +1481,15 @@ ${tr('welcome.tip')}
       if (pendingEditsSince === 0) pendingEditsSince = Date.now();
       const s = settingsStore.getState();
       if (shouldAutoSave(Date.now(), pendingEditsSince, lastEditTime(), {
-        maxMinutes: s.autoSaveMaxMinutes,
-        idleMinutes: s.autoSaveIdleMinutes,
+        maxSeconds: s.autoSaveMaxSeconds,
+        idleSeconds: s.autoSaveIdleSeconds,
       })) {
         handleSave(false, { auto: true });
       }
-    }, AUTOSAVE_TICK_MS);
+    }, autoSaveTickMs({
+      maxSeconds: settingsStore.getState().autoSaveMaxSeconds,
+      idleSeconds: settingsStore.getState().autoSaveIdleSeconds,
+    }));
   }
 
   // ── MCP shortcut action handlers (v0.41.6) ─────────────────────────
@@ -2611,8 +2658,9 @@ ${tr('welcome.tip')}
           const newContent = await invoke('read_file', { path: tab.filePath }) as string;
           tabsStore.updateTabContent(tab.id, newContent, currentMtime);
           if (tab.id === state.activeTabId) {
+            const previous = content;
             content = newContent;
-            await replaceContentAndScrollToTop(content);
+            await replaceContentKeepingPlace(content, previous);
           }
         } catch { /* file may have been deleted */ }
       } else {
@@ -2633,8 +2681,9 @@ ${tr('welcome.tip')}
             const newContent = await invoke('read_file', { path: tab.filePath }) as string;
             tabsStore.updateTabContent(tab.id, newContent, currentMtime);
             if (tab.id === state.activeTabId) {
+              const previous = content;
               content = newContent;
-              await replaceContentAndScrollToTop(content);
+              await replaceContentKeepingPlace(content, previous);
             }
           } catch { /* ignore */ }
         }
@@ -3525,11 +3574,19 @@ ${tr('welcome.tip')}
           // Close, then make sure it actually happened. destroy() is the right
           // primitive (close() would re-enter this very handler), but if it does
           // not take effect the user is left with a window that cannot be
-          // closed at all — the failure this whole path keeps landing in. So:
-          // if we are still alive a moment later, and this was the LAST window,
-          // quit the app outright. When destroy() works the webview is gone and
-          // this timer never runs; the last-window check keeps a multi-window
-          // session from being taken down by closing one of them.
+          // closed at all. So: if we are still alive a moment later, and this
+          // was the LAST window, quit the app outright. When destroy() works the
+          // webview is gone and this timer never runs; the last-window check
+          // keeps a multi-window session from being taken down by closing one of
+          // them.
+          //
+          // That fallback also hid issue #93 for a long time. `destroy()` was
+          // rejecting on EVERY close — the capability was never granted — and
+          // the quit path silently covered for it whenever there was one window.
+          // With two, there was no cover and the window simply would not close.
+          // The permission is granted now (capabilities/default.json, pinned by
+          // capabilities.test.ts); this stays as a genuine safety net rather
+          // than as the thing that actually closes windows.
           const lastWindow = (await getAllWindows().catch(() => [])).length <= 1;
           await getCurrentWindow().destroy().catch((e) => {
             console.warn('[Close] destroy() failed:', e);

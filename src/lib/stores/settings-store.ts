@@ -65,11 +65,16 @@ interface Settings {
   autoSave: boolean;
   /** @deprecated v1.21.0 — replaced by autoSaveMaxMinutes/autoSaveIdleMinutes; kept so older settings.json files still parse. */
   autoSaveInterval: number; // milliseconds
-  // v1.21.0: dual-condition autosave — force-save a dirty doc at most this many
-  // minutes after the last save, even while the user keeps typing.
-  autoSaveMaxMinutes: number;
-  // v1.21.0: save a dirty doc once the user has paused input for this many minutes.
-  autoSaveIdleMinutes: number;
+  /** @deprecated issue #91 — superseded by autoSaveMaxSeconds; migrated on load. */
+  autoSaveMaxMinutes?: number;
+  /** @deprecated issue #91 — superseded by autoSaveIdleSeconds; migrated on load. */
+  autoSaveIdleMinutes?: number;
+  // Dual-condition autosave (v1.21.0), in SECONDS since issue #91: force-save a
+  // dirty doc at most this many seconds after the last save, even while the
+  // user keeps typing.
+  autoSaveMaxSeconds: number;
+  // Save a dirty doc once the user has paused input for this many seconds.
+  autoSaveIdleSeconds: number;
   showSidebar: boolean;
   showStatusBar: boolean;
   localeSelection: LocaleSelection;
@@ -195,8 +200,8 @@ const DEFAULT_SETTINGS: Settings = {
   lineWidth: 800,
   autoSave: true,
   autoSaveInterval: 30000,
-  autoSaveMaxMinutes: 10,
-  autoSaveIdleMinutes: 3,
+  autoSaveMaxSeconds: 600,
+  autoSaveIdleSeconds: 180,
   showSidebar: false,
   showStatusBar: true,
   localeSelection: 'system',
@@ -493,6 +498,18 @@ export async function initSettingsStore() {
     if (saved) {
       // Merge with defaults to handle new fields added in updates
       settingsStore.update(saved);
+
+      // Migration: autosave intervals moved from minutes to seconds (issue
+      // #91 — a one-minute floor is a long wait when an external tool is
+      // editing the same file). Carry the old value across at ×60 so nobody's
+      // configured cadence changes underneath them; only fall back to the
+      // default when there was nothing stored at all.
+      if (saved.autoSaveMaxSeconds === undefined && saved.autoSaveMaxMinutes !== undefined) {
+        settingsStore.update({ autoSaveMaxSeconds: Math.round(saved.autoSaveMaxMinutes * 60) });
+      }
+      if (saved.autoSaveIdleSeconds === undefined && saved.autoSaveIdleMinutes !== undefined) {
+        settingsStore.update({ autoSaveIdleSeconds: Math.round(saved.autoSaveIdleMinutes * 60) });
+      }
 
       // Migration: the outline default width has changed twice (200 → 260 →
       // 240). Because settings persist wholesale, an existing install carries

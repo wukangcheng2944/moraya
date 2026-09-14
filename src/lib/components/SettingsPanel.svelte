@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
+  import { AUTOSAVE_MAX_RANGE, AUTOSAVE_IDLE_RANGE } from '$lib/utils/autosave';
   import { settingsStore, type Theme } from '../stores/settings-store';
   import { filesStore, type KnowledgeBase } from '../stores/files-store';
   import { t, SUPPORTED_LOCALES, type LocaleSelection } from '$lib/i18n';
@@ -48,8 +49,8 @@
   let useSeparateDarkTheme = $state(false);
   let fontSize = $state(16);
   let autoSave = $state(true);
-  let autoSaveMaxMinutes = $state(10);
-  let autoSaveIdleMinutes = $state(3);
+  let autoSaveMaxSeconds = $state(600);
+  let autoSaveIdleSeconds = $state(180);
   let rememberLastFolder = $state(true);
   let rulesHistoryCount = $state(10);
   let versionHistoryEnabled = $state(true);
@@ -99,8 +100,8 @@
     useSeparateDarkTheme = state.useSeparateDarkTheme;
     fontSize = state.fontSize;
     autoSave = state.autoSave;
-    autoSaveMaxMinutes = state.autoSaveMaxMinutes ?? 10;
-    autoSaveIdleMinutes = state.autoSaveIdleMinutes ?? 3;
+    autoSaveMaxSeconds = state.autoSaveMaxSeconds ?? 600;
+    autoSaveIdleSeconds = state.autoSaveIdleSeconds ?? 180;
     rememberLastFolder = state.rememberLastFolder;
     rulesHistoryCount = state.rulesHistoryCount ?? 10;
     versionHistoryEnabled = state.versionHistoryEnabled ?? true;
@@ -146,12 +147,16 @@
 
   function handleAutoSaveMaxChange(event: Event) {
     const value = parseInt((event.target as HTMLInputElement).value, 10);
-    if (value >= 1 && value <= 120) settingsStore.update({ autoSaveMaxMinutes: value });
+    if (value >= AUTOSAVE_MAX_RANGE.min && value <= AUTOSAVE_MAX_RANGE.max) {
+      settingsStore.update({ autoSaveMaxSeconds: value });
+    }
   }
 
   function handleAutoSaveIdleChange(event: Event) {
     const value = parseInt((event.target as HTMLInputElement).value, 10);
-    if (value >= 1 && value <= 60) settingsStore.update({ autoSaveIdleMinutes: value });
+    if (value >= AUTOSAVE_IDLE_RANGE.min && value <= AUTOSAVE_IDLE_RANGE.max) {
+      settingsStore.update({ autoSaveIdleSeconds: value });
+    }
   }
 
   function handleLineWidthChange(event: Event) {
@@ -332,12 +337,12 @@
                       <input
                         id="settings-autosave-max"
                         type="number"
-                        min="1" max="120"
-                        value={autoSaveMaxMinutes}
+                        min={AUTOSAVE_MAX_RANGE.min} max={AUTOSAVE_MAX_RANGE.max}
+                        value={autoSaveMaxSeconds}
                         oninput={handleAutoSaveMaxChange}
                         class="gx-number"
                       />
-                      <span class="gx-value">{$t('settings.auto_save.minutes_unit')}</span>
+                      <span class="gx-value">{$t('settings.auto_save.seconds_unit')}</span>
                     </div>
                     <p class="gx-hint gx-hint-indent">{$t('settings.auto_save.max_interval_hint')}</p>
                   </div>
@@ -347,12 +352,12 @@
                       <input
                         id="settings-autosave-idle"
                         type="number"
-                        min="1" max="60"
-                        value={autoSaveIdleMinutes}
+                        min={AUTOSAVE_IDLE_RANGE.min} max={AUTOSAVE_IDLE_RANGE.max}
+                        value={autoSaveIdleSeconds}
                         oninput={handleAutoSaveIdleChange}
                         class="gx-number"
                       />
-                      <span class="gx-value">{$t('settings.auto_save.minutes_unit')}</span>
+                      <span class="gx-value">{$t('settings.auto_save.seconds_unit')}</span>
                     </div>
                     <p class="gx-hint gx-hint-indent">{$t('settings.auto_save.idle_interval_hint')}</p>
                   </div>

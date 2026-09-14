@@ -42,6 +42,7 @@
   import { editorHoldsCaret } from './editor-focus';
   import { chromeFor, type CreationView } from './creation-view';
   import { resolveLinkTarget } from './link-target';
+  import { captureAnchor, locateAnchor, type ReadingAnchor } from './reading-anchor';
   import { tauriLinkOpener } from './adapters/tauri-link-opener';
   import katex from 'katex';
   // Side-effect: \ce/\pu (mhchem) for chemistry in inline previews.
@@ -3597,6 +3598,63 @@
   }
 
   /** Get full markdown including stored frontmatter. */
+  /**
+   * Remember where the reader is, so an external reload can put them back
+   * (issue #92).
+   *
+   * The anchor space here is the RENDERED top-level blocks, not source lines:
+   * mapping a ProseMirror position back to a markdown line means serializing a
+   * prefix of the document, and mapping a line forward to a position again
+   * means doing that repeatedly. Blocks are already in the DOM with their
+   * text, the same reading position is expressible in them, and the anchor
+   * never leaves this component — it is captured and restored inside one
+   * reload, in whatever mode is on screen.
+   */
+  export function getReadingAnchor(): ReadingAnchor | null {
+    if (!editor || !wrapperEl) return null;
+    const pm = editorEl?.querySelector('.ProseMirror') as HTMLElement | null;
+    if (!pm || pm.children.length === 0) return null;
+    const wrapTop = wrapperEl.getBoundingClientRect().top;
+
+    const texts: string[] = [];
+    let index = 0;
+    let offset = 0;
+    let found = false;
+    for (let i = 0; i < pm.children.length; i++) {
+      const el = pm.children[i] as HTMLElement;
+      texts.push(el.textContent ?? '');
+      if (found) continue;
+      const r = el.getBoundingClientRect();
+      // First block still showing: its bottom has not passed the viewport top.
+      if (r.bottom > wrapTop) {
+        index = i;
+        offset = wrapTop - r.top; // how far into it we have scrolled
+        found = true;
+      }
+    }
+    if (!found) return null;
+    return captureAnchor(texts.join('\n'), index, offset);
+  }
+
+  /** Put the reader back where getReadingAnchor() found them. */
+  export function restoreReadingAnchor(anchor: ReadingAnchor): void {
+    if (!wrapperEl) return;
+    const pm = editorEl?.querySelector('.ProseMirror') as HTMLElement | null;
+    if (!pm || pm.children.length === 0) return;
+
+    const texts = Array.from(pm.children, (el) => (el as HTMLElement).textContent ?? '');
+    const index = locateAnchor(texts.join('\n'), anchor);
+    // null means the document changed past recognition — leave the scroll
+    // where it is rather than sending the reader somewhere arbitrary.
+    if (index === null) return;
+
+    const el = pm.children[Math.max(0, Math.min(index, pm.children.length - 1))] as HTMLElement | undefined;
+    if (!el) return;
+    const wrapTop = wrapperEl.getBoundingClientRect().top;
+    const delta = el.getBoundingClientRect().top - wrapTop - anchor.offsetWithinLine;
+    wrapperEl.scrollTo(0, Math.max(0, wrapperEl.scrollTop + delta));
+  }
+
   export function getFullMarkdown(): string {
     if (!editor) return content;
     try {
