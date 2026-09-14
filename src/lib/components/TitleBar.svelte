@@ -1129,6 +1129,13 @@
     border-radius: 50%;
     background: var(--accent-color);
     flex-shrink: 0;
+    display: inline-block;
+    animation: badgeDotPop var(--duration-fast, 250ms) var(--ease-bounce, cubic-bezier(0.34, 1.36, 0.64, 1));
+  }
+  @keyframes badgeDotPop {
+    0% { transform: scale(0); opacity: 0; }
+    65% { transform: scale(1.35); opacity: 1; }
+    100% { transform: scale(1); opacity: 1; }
   }
 
   .readonly-lock {
@@ -1165,24 +1172,45 @@
     color: var(--text-primary);
   }
 
-  /* Multi-select and Drag Hover Center 40% Merge Indicator */
+  /* Multi-select and Drag Hover Center 40% Merge Indicator (transitions.dev motion) */
   .tab-entry.ctrl-selected {
     outline: 2px solid var(--accent-color, #0078d4) !important;
     outline-offset: -2px !important;
-    background: rgba(0, 120, 212, 0.1) !important;
+    background: rgba(0, 120, 212, 0.12) !important;
+    box-shadow: 0 0 10px rgba(0, 120, 212, 0.25) !important;
+    transform: scale(0.985);
+    transition: transform var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1)),
+                background var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1)),
+                box-shadow var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1));
   }
   .tab-entry.merge-hover {
     outline: 2px dashed var(--accent-color, #0078d4) !important;
     outline-offset: -2px !important;
-    background: rgba(0, 120, 212, 0.15) !important;
-    animation: pulse-merge 0.5s infinite alternate;
+    background: rgba(0, 120, 212, 0.16) !important;
+    animation: mergeHaloPulse var(--duration-very-slow, 500ms) infinite alternate var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1));
   }
-  @keyframes pulse-merge {
-    from { transform: scale(0.98); }
-    to { transform: scale(1.02); }
+  @keyframes mergeHaloPulse {
+    0% {
+      transform: scale(0.975);
+      box-shadow: 0 0 0 0 rgba(74, 144, 217, 0.4), inset 0 0 0 1.5px var(--accent-color);
+    }
+    100% {
+      transform: scale(1.01);
+      box-shadow: 0 0 0 5px rgba(74, 144, 217, 0.12), inset 0 0 0 2px var(--accent-color);
+    }
   }
 
   /* Tab Group (Composite Big Tab) */
+  @keyframes tabGroupAppear {
+    from {
+      opacity: 0;
+      transform: scale(0.96) translateY(2px);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1) translateY(0);
+    }
+  }
   .tab-group {
     display: flex;
     align-items: center;
@@ -1201,7 +1229,12 @@
     cursor: pointer;
     -webkit-app-region: no-drag;
     position: relative;
-    transition: background var(--transition-fast), color var(--transition-fast);
+    animation: tabGroupAppear var(--duration-fast, 250ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1));
+    transition: transform var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1)),
+                background var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1)),
+                color var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1)),
+                border-color var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1)),
+                box-shadow var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1));
   }
   .tab-group:hover {
     background: rgba(0, 0, 0, 0.05);
@@ -1215,6 +1248,7 @@
     border-bottom: 1px solid var(--bg-primary, #ffffff);
     margin-bottom: -1px;
     z-index: 2;
+    box-shadow: 0 -1px 3px rgba(0, 0, 0, 0.03);
   }
   .tab-group.dragging {
     opacity: 0.4;
@@ -1225,6 +1259,9 @@
   .tab-group .tab-close {
     opacity: 0;
     pointer-events: none;
+    transition: opacity var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1)),
+                background var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1)),
+                transform var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1));
   }
   .tab-group:hover .tab-close,
   .tab-group.active .tab-close {
@@ -1236,6 +1273,10 @@
     align-items: center;
     flex-shrink: 0;
     color: var(--accent-color, #0078d4);
+    transition: transform var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1));
+  }
+  .tab-group:hover .group-icon {
+    transform: scale(1.08);
   }
   .sub-tabs-strip {
     display: flex;
@@ -1263,20 +1304,30 @@
     flex-shrink: 0;
     max-width: 110px;
     user-select: none;
-    transition: background var(--transition-fast), color var(--transition-fast);
+    transition: transform var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1)),
+                background var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1)),
+                color var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1)),
+                box-shadow var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1));
   }
   .sub-tab-chip:hover {
     background: rgba(0, 0, 0, 0.09);
     color: var(--text-primary);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.06);
+  }
+  .sub-tab-chip:active {
+    transform: translateY(0) scale(0.98);
   }
   .sub-tab-chip.active {
     background: var(--accent-color, #0078d4);
     color: #ffffff;
     font-weight: 500;
+    box-shadow: 0 1px 3px rgba(0, 120, 212, 0.3);
   }
   .sub-tab-chip.sub-dragging {
     opacity: 0.5;
     cursor: grabbing;
+    transform: scale(0.96);
   }
   .sub-tab-icon {
     display: flex;
@@ -1304,13 +1355,18 @@
     opacity: 0.6;
     cursor: pointer;
     flex-shrink: 0;
+    transition: transform var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1)),
+                background var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1)),
+                opacity var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1));
   }
   .sub-tab-close:hover {
     opacity: 1;
     background: rgba(0, 0, 0, 0.15);
+    transform: rotate(90deg) scale(1.15);
   }
   .sub-tab-chip.active .sub-tab-close:hover {
     background: rgba(255, 255, 255, 0.25);
+    transform: rotate(90deg) scale(1.15);
   }
   .group-unmerge-btn {
     display: flex;
@@ -1324,7 +1380,10 @@
     flex-shrink: 0;
     opacity: 0;
     pointer-events: none;
-    transition: opacity 0.15s, background var(--transition-fast), color var(--transition-fast);
+    transition: opacity var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1)),
+                transform var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1)),
+                background var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1)),
+                color var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1));
   }
   .tab-group:hover .group-unmerge-btn,
   .tab-group.active .group-unmerge-btn {
@@ -1334,6 +1393,20 @@
   .group-unmerge-btn:hover {
     background: var(--bg-hover, rgba(0, 0, 0, 0.08));
     color: var(--text-primary);
+    transform: scale(1.12);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .tab-entry.ctrl-selected,
+    .tab-entry.merge-hover,
+    .tab-group,
+    .sub-tab-chip,
+    .sub-tab-close,
+    .group-unmerge-btn,
+    .dirty-dot {
+      animation: none !important;
+      transition: none !important;
+    }
   }
 
   /* macOS: transparent overlay drag region for Overlay title bar style.

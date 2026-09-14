@@ -5006,7 +5006,7 @@ ${tr('welcome.tip')}
     background: var(--bg-primary);
   }
 
-  /* Parallel / Multi-document View */
+  /* Parallel / Multi-document View (transitions.dev motion) */
   .parallel-editors-container {
     display: flex;
     flex-direction: row;
@@ -5018,6 +5018,19 @@ ${tr('welcome.tip')}
     background: var(--bg-primary);
   }
 
+  @keyframes parallelPaneReveal {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+      filter: blur(var(--blur-small, 2px));
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+      filter: blur(0);
+    }
+  }
+
   .parallel-editor-pane {
     display: flex;
     flex-direction: column;
@@ -5027,6 +5040,16 @@ ${tr('welcome.tip')}
     border-right: 1px solid var(--border-color);
     position: relative;
     overflow: hidden;
+    animation: parallelPaneReveal var(--duration-fast, 250ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1)) both;
+    transition: box-shadow var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1));
+  }
+
+  .parallel-editor-pane:nth-child(2) {
+    animation-delay: var(--duration-stagger, 40ms);
+  }
+
+  .parallel-editor-pane:nth-child(3) {
+    animation-delay: calc(var(--duration-stagger, 40ms) * 2);
   }
 
   .parallel-editor-pane:last-child {
@@ -5045,6 +5068,9 @@ ${tr('welcome.tip')}
     color: var(--text-secondary);
     user-select: none;
     flex-shrink: 0;
+    transition: background var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1)),
+                color var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1)),
+                box-shadow var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1));
   }
 
   .parallel-editor-pane.active-pane .parallel-pane-header {
@@ -5068,6 +5094,11 @@ ${tr('welcome.tip')}
     align-items: center;
     color: var(--accent-color);
     flex-shrink: 0;
+    transition: transform var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1));
+  }
+
+  .parallel-editor-pane.active-pane .pane-flavor-icon {
+    transform: scale(1.1);
   }
 
   .pane-filename {
@@ -5095,17 +5126,31 @@ ${tr('welcome.tip')}
     color: var(--text-muted);
     border-radius: 4px;
     cursor: pointer;
-    transition: background var(--transition-fast), color var(--transition-fast);
+    transition: transform var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1)),
+                background var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1)),
+                color var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1));
   }
 
   .pane-action-btn:hover {
     background: var(--bg-hover, rgba(0, 0, 0, 0.08));
     color: var(--text-primary);
+    transform: scale(1.12);
+  }
+
+  .pane-action-btn:active {
+    transform: scale(0.94);
   }
 
   .pane-close-btn {
     font-size: 14px;
     line-height: 1;
+    transition: transform var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1)),
+                background var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1)),
+                color var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1));
+  }
+
+  .pane-close-btn:hover {
+    transform: rotate(90deg) scale(1.15);
   }
 
   .parallel-pane-body {
@@ -5117,6 +5162,17 @@ ${tr('welcome.tip')}
     overflow: hidden;
     display: flex;
     flex-direction: column;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .parallel-editor-pane,
+    .parallel-pane-header,
+    .pane-action-btn,
+    .pane-close-btn,
+    .pane-flavor-icon {
+      animation: none !important;
+      transition: none !important;
+    }
   }
 
   /* Split mode: golden ratio 38.2% source, 61.8% visual */
