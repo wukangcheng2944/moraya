@@ -416,6 +416,7 @@
   let initFailure = $state<string | null>(null);
   let pendingSyncMd: string | null = null; // content requested before editor was ready
   let isMounted = false; // tracks whether component is still alive (guards async gaps)
+  let isDestroying = false; // tracks whether component is being torn down
   let internalChange = false; // flag to avoid re-sync loop on editor's own onChange
   let syncingFromExternal = false; // flag to suppress onChange during sync from source editor
   let syncResetTimer: ReturnType<typeof setTimeout> | undefined; // delayed reset for syncingFromExternal
@@ -2808,10 +2809,16 @@
       defaultValue: body,
       editable: !isReadOnly,
       onFocus: () => {
-        if (isMounted) editorStore.setFocused(true);
+        if (!isMounted || isDestroying) return;
+        queueMicrotask(() => {
+          if (isMounted && !isDestroying) editorStore.setFocused(true);
+        });
       },
       onBlur: () => {
-        if (isMounted) editorStore.setFocused(false);
+        if (!isMounted || isDestroying) return;
+        queueMicrotask(() => {
+          if (isMounted && !isDestroying) editorStore.setFocused(false);
+        });
       },
     };
 
@@ -3887,6 +3894,7 @@
   }
 
   onDestroy(() => {
+    isDestroying = true;
     isMounted = false; // Signal async callbacks to stop
     if (caretBlinkRaf) cancelAnimationFrame(caretBlinkRaf);
     if (visualCaretRaf) cancelAnimationFrame(visualCaretRaf);

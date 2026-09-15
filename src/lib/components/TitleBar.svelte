@@ -90,7 +90,9 @@
   // Track dirty state from store — top-level subscribe, do NOT wrap in $effect().
   let isDirty = $state(false);
   const unsubEditor = editorStore.subscribe(state => {
-    isDirty = state.isDirty;
+    queueMicrotask(() => {
+      isDirty = state.isDirty;
+    });
   });
   onDestroy(() => {
     unsubEditor();
@@ -945,6 +947,7 @@
                 role="button"
                 tabindex="-1"
                 title="解除并列（拆分为独立标签）"
+                onpointerdown={(e) => e.stopPropagation()}
                 onclick={(e) => { e.stopPropagation(); tabsStore.unmergeTabGroup(tab.id); }}
               >
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
@@ -1541,6 +1544,9 @@
     background: var(--bg-hover, rgba(0, 0, 0, 0.08));
     color: var(--text-primary);
     transform: scale(1.12);
+  }
+  .group-unmerge-btn svg {
+    pointer-events: none;
   }
 
   @media (prefers-reduced-motion: reduce) {

@@ -530,6 +530,7 @@ function createTabsStore() {
     /** Unmerge a Tab Group back into individual tabs */
     unmergeTabGroup(groupId: string) {
       syncFromEditor();
+      let tabToSync: TabItem | null = null;
       update(state => {
         const groupIdx = state.tabs.findIndex(t => t.id === groupId);
         if (groupIdx === -1) return state;
@@ -542,16 +543,20 @@ function createTabsStore() {
         newTabs.splice(groupIdx, 1, ...subTabs);
 
         const nextActive = subTabs.find(st => st.id === activeSubId) || subTabs[0];
-        syncToEditor(nextActive);
+        tabToSync = nextActive;
         return {
           tabs: newTabs,
           activeTabId: nextActive.id,
         };
       });
+      if (tabToSync) {
+        syncToEditor(tabToSync);
+      }
     },
 
     /** Close a sub-tab inside a Tab Group */
     closeSubTab(groupId: string, subTabId: string) {
+      let tabToSync: TabItem | null = null;
       update(state => {
         const groupIdx = state.tabs.findIndex(t => t.id === groupId);
         if (groupIdx === -1) return state;
@@ -573,11 +578,11 @@ function createTabsStore() {
               scrollFraction: 0,
               lastMtime: null,
             };
-            syncToEditor(fallback);
+            tabToSync = fallback;
             return { tabs: [fallback], activeTabId: fallback.id };
           }
           const nextActive = newTabs[Math.max(0, groupIdx - 1)];
-          syncToEditor(nextActive);
+          tabToSync = nextActive;
           return { tabs: newTabs, activeTabId: nextActive.id };
         }
 
@@ -587,7 +592,7 @@ function createTabsStore() {
           const newTabs = [...state.tabs];
           newTabs[groupIdx] = single;
           if (state.activeTabId === groupId) {
-            syncToEditor(single);
+            tabToSync = single;
             return { tabs: newTabs, activeTabId: single.id };
           }
           return { ...state, tabs: newTabs };
@@ -606,10 +611,13 @@ function createTabsStore() {
         newTabs[groupIdx] = updatedGroup;
         if (state.activeTabId === groupId) {
           const focused = remaining.find(st => st.id === nextActiveSubId) || remaining[0];
-          syncToEditor(focused);
+          tabToSync = focused;
         }
         return { ...state, tabs: newTabs };
       });
+      if (tabToSync) {
+        syncToEditor(tabToSync);
+      }
     },
 
     /** Set active sub-tab within a group */
