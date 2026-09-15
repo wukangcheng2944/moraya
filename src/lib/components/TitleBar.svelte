@@ -339,6 +339,9 @@
       selectedTabIds = [];
     }
 
+    const dragTabId = tabs[index]?.id;
+    let didMerge = false;
+
     dragStartX = event.clientX;
     isDragging = false;
     isDetaching = false;
@@ -505,11 +508,15 @@
         if (e.clientX >= rect.left && e.clientX < rect.right) {
           target = i;
           if (i !== index) {
-            const centerLeft = rect.left + rect.width * 0.3;
-            const centerRight = rect.left + rect.width * 0.7;
-            if (e.clientX >= centerLeft && e.clientX <= centerRight) {
-              hoveringCenter = true;
-              centerTargetIdx = i;
+            const targetTab = tabs[i];
+            const isFull = (targetTab?.subTabs?.length ?? 0) >= 3;
+            if (!isFull) {
+              const centerLeft = rect.left + rect.width * 0.3;
+              const centerRight = rect.left + rect.width * 0.7;
+              if (e.clientX >= centerLeft && e.clientX <= centerRight) {
+                hoveringCenter = true;
+                centerTargetIdx = i;
+              }
             }
           }
           break;
@@ -521,13 +528,12 @@
         if (mergeTargetIndex !== centerTargetIdx) {
           mergeTargetIndex = centerTargetIdx;
           if (mergeTimer) clearTimeout(mergeTimer);
-          const fromIdx = index;
-          const toIdx = centerTargetIdx;
+          const targetTabId = tabs[centerTargetIdx]?.id;
           mergeTimer = setTimeout(() => {
-            const tabA = tabs[fromIdx];
-            const tabB = tabs[toIdx];
-            if (tabA && tabB) {
-              tabsStore.mergeTabs([tabA.id, tabB.id]);
+            if (didMerge) return;
+            didMerge = true;
+            if (dragTabId && targetTabId) {
+              tabsStore.mergeTabs([dragTabId, targetTabId]);
             }
             onUp();
           }, 500);
@@ -656,6 +662,9 @@
       const savedCachedBounds = cachedBounds;
       const savedDropTargetIndex = dropTargetIndex;
       const savedSingleTabHidden = singleTabHidden;
+      const savedMergeTarget = mergeTargetIndex;
+      const wasMerged = didMerge;
+
       if (mergeTimer) {
         clearTimeout(mergeTimer);
         mergeTimer = null;
@@ -683,7 +692,9 @@
       }
 
       if (savedIsDragging && savedDragTabIndex !== null) {
-        if (savedDetachTriggered) {
+        if (wasMerged) {
+          // Already merged via 500ms hover timer — nothing more to do
+        } else if (savedDetachTriggered) {
           // Ensure we have the detached window label (IPC might still be in flight)
           const finalLabel = savedDetachedWindowLabel ??
             (savedDetachPromise ? (await savedDetachPromise.catch(() => undefined)) ?? null : null);
@@ -697,6 +708,13 @@
         } else if (savedCrossTarget) {
           // Single-tab or pre-detach attach
           await onAttachTab(savedDragTabIndex, savedCrossTarget);
+        } else if (savedMergeTarget !== null && savedDragTabIndex !== savedMergeTarget) {
+          // User dropped directly onto center 40% merge target
+          didMerge = true;
+          const targetTabId = tabs[savedMergeTarget]?.id;
+          if (dragTabId && targetTabId) {
+            tabsStore.mergeTabs([dragTabId, targetTabId]);
+          }
         } else if (savedDropTargetIndex !== null && savedDragTabIndex !== savedDropTargetIndex) {
           onReorderTabs(savedDragTabIndex, savedDropTargetIndex);
         }
