@@ -192,6 +192,7 @@
     }
 
     function onSubMove(e: PointerEvent) {
+      e.preventDefault();
       const dx = e.clientX - startX;
       if (!isDragging) {
         if (Math.abs(dx) > 3) {
@@ -214,13 +215,16 @@
       // Dragged chip directly follows pointer
       el.style.transform = `translateX(${dx}px)`;
 
-      // Determine target slot based on current dragged center vs slot boundaries
+      // Determine target slot by closest slot center for natural, forgiving targeting
       const currentCenter = initialRects[originIndex].left + initialRects[originIndex].width / 2 + dx;
-      let target = 0;
-      for (let k = 0; k < initialRects.length - 1; k++) {
-        const boundary = (initialRects[k].left + initialRects[k].width / 2 + initialRects[k + 1].left + initialRects[k + 1].width / 2) / 2;
-        if (currentCenter > boundary) {
-          target = k + 1;
+      let target = originIndex;
+      let minDistance = Infinity;
+      for (let k = 0; k < initialRects.length; k++) {
+        const slotCenter = initialRects[k].left + initialRects[k].width / 2;
+        const dist = Math.abs(currentCenter - slotCenter);
+        if (dist < minDistance) {
+          minDistance = dist;
+          target = k;
         }
       }
       target = Math.max(0, Math.min(chipEls.length - 1, target));
@@ -247,12 +251,12 @@
       // Compute resting offset for dragged chip into its target slot
       const finalOffset = initialRects[currentIndex].left - initialRects[originIndex].left;
 
-      el.style.transition = 'transform var(--duration-quick, 180ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1))';
+      el.style.transition = 'transform var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1))';
       el.style.transform = `translateX(${finalOffset}px)`;
 
       const timer = setTimeout(() => {
         finalizeOrder();
-      }, 180);
+      }, 150);
 
       activeSubDragCleanup = () => {
         clearTimeout(timer);
@@ -276,7 +280,6 @@
       window.removeEventListener('pointerup', finishDrag, true);
       window.removeEventListener('pointercancel', finishDrag, true);
       window.removeEventListener('blur', finishDrag);
-      el.removeEventListener('lostpointercapture', finishDrag);
     }
 
     activeSubDragCleanup = () => {
@@ -291,7 +294,6 @@
     window.addEventListener('pointerup', finishDrag, true);
     window.addEventListener('pointercancel', finishDrag, true);
     window.addEventListener('blur', finishDrag);
-    el.addEventListener('lostpointercapture', finishDrag);
   }
 
   // Tab drag reorder state (mouse-based, not HTML5 DnD — more reliable in Tauri WebKit)

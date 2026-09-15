@@ -206,16 +206,60 @@ function createTabsStore() {
      *  When isImage is true, the tab renders an image preview instead of the editor. */
     openFileTab(filePath: string, fileName: string, content: string, mtime?: number | null, skipSync = false, isImage = false): string {
       const state = get({ subscribe });
-      // Check if file is already open in a tab
+      // 1. Check if file is already open in a top-level tab
       const existing = state.tabs.find(t => t.filePath === filePath);
       if (existing) {
-        // Switch to existing tab
         if (!skipSync) syncFromEditor();
-        update(s => ({ ...s, activeTabId: existing.id }));
-        syncToEditor(existing);
+        let freshTab: TabItem = existing;
+        update(s => {
+          const updatedTabs = s.tabs.map(t => {
+            if (t.id === existing.id) {
+              freshTab = !t.isDirty ? { ...t, content, lastMtime: mtime ?? t.lastMtime } : t;
+              return freshTab;
+            }
+            return t;
+          });
+          return { ...s, activeTabId: existing.id, tabs: updatedTabs };
+        });
+        syncToEditor(freshTab);
         return existing.id;
       }
-      // Create new tab
+
+      // 2. Check if file is open as a sub-tab in a tab group
+      for (const tab of state.tabs) {
+        if (tab.subTabs) {
+          const subMatch = tab.subTabs.find(st => st.filePath === filePath);
+          if (subMatch) {
+            if (!skipSync) syncFromEditor();
+            let freshSub: TabItem = subMatch;
+            update(s => ({
+              ...s,
+              activeTabId: tab.id,
+              tabs: s.tabs.map(t => {
+                if (t.id === tab.id && t.subTabs) {
+                  const updatedSubTabs = t.subTabs.map(st => {
+                    if (st.id === subMatch.id) {
+                      freshSub = !st.isDirty ? { ...st, content, lastMtime: mtime ?? st.lastMtime } : st;
+                      return freshSub;
+                    }
+                    return st;
+                  });
+                  return {
+                    ...t,
+                    activeSubTabId: subMatch.id,
+                    subTabs: updatedSubTabs,
+                  };
+                }
+                return t;
+              })
+            }));
+            syncToEditor(freshSub);
+            return tab.id;
+          }
+        }
+      }
+
+      // 3. Create new tab
       if (!skipSync) syncFromEditor();
       const newTab: TabItem = {
         id: generateTabId(),
@@ -644,6 +688,24 @@ function createTabsStore() {
           if (tab.id !== groupId || !tab.subTabs) return tab;
           const updatedSubTabs = tab.subTabs.map(st =>
             st.id === subTabId ? { ...st, content, isDirty } : st
+          );
+          return {
+            ...tab,
+            subTabs: updatedSubTabs,
+            isDirty: updatedSubTabs.some(st => st.isDirty),
+          };
+        }),
+      }));
+    },
+
+    /** Update a specific sub-tab's content from external disk reload */
+    updateSubTabDiskContent(groupId: string, subTabId: string, content: string, mtime: number) {
+      update(state => ({
+        ...state,
+        tabs: state.tabs.map(tab => {
+          if (tab.id !== groupId || !tab.subTabs) return tab;
+          const updatedSubTabs = tab.subTabs.map(st =>
+            st.id === subTabId ? { ...st, content, lastMtime: mtime, isDirty: false } : st
           );
           return {
             ...tab,

@@ -2637,62 +2637,272 @@ ${tr('welcome.tip')}
     }
   }
 
-  // External file change detection: check on window focus
+  // External file change detection: check on window focus and periodic background polling
   let isCheckingChanges = false;
 
+  interface FileCheckTarget {
+    path: string;
+    lastMtime: number;
+    isDirty: boolean;
+    fileName: string;
+    isSubTab: boolean;
+    groupId?: string;
+    tabId: string;
+  }
+
   async function checkExternalChanges() {
-    const state = tabsStore.getState();
-    const fileTabs = state.tabs.filter(t => t.filePath && t.lastMtime != null);
-    if (fileTabs.length === 0) return;
-
-    const paths = fileTabs.map(t => t.filePath!);
-    let mtimes: [string, number][];
+    if (isCheckingChanges) return;
+    isCheckingChanges = true;
     try {
-      mtimes = await invoke('get_files_mtime', { paths }) as [string, number][];
-    } catch { return; }
-    const mtimeMap = new Map(mtimes);
+      const state = tabsStore.getState();
+      const targets: FileCheckTarget[] = [];
 
-    for (const tab of fileTabs) {
-      const currentMtime = mtimeMap.get(tab.filePath!);
-      if (currentMtime == null || currentMtime === tab.lastMtime) continue;
-
-      if (!tab.isDirty) {
-        // Clean tab: auto-reload silently
-        try {
-          const newContent = await invoke('read_file', { path: tab.filePath }) as string;
-          tabsStore.updateTabContent(tab.id, newContent, currentMtime);
-          if (tab.id === state.activeTabId) {
-            const previous = content;
-            content = newContent;
-            await replaceContentKeepingPlace(content, previous);
-          }
-        } catch { /* file may have been deleted */ }
-      } else {
-        // Dirty tab: conflict dialog
-        const keepLocal = await ask(
-          $t('tabs.external_change_msg', { fileName: tab.fileName }),
-          {
-            title: $t('tabs.external_change_title'),
-            kind: 'warning',
-            okLabel: $t('tabs.keep_local'),
-            cancelLabel: $t('tabs.load_from_disk'),
-          }
-        );
-        if (keepLocal) {
-          tabsStore.updateTabMtime(tab.id, currentMtime);
-        } else {
-          try {
-            const newContent = await invoke('read_file', { path: tab.filePath }) as string;
-            tabsStore.updateTabContent(tab.id, newContent, currentMtime);
-            if (tab.id === state.activeTabId) {
-              const previous = content;
-              content = newContent;
-              await replaceContentKeepingPlace(content, previous);
+      for (const tab of state.tabs) {
+        if (tab.subTabs && tab.subTabs.length >= 2) {
+          for (const st of tab.subTabs) {
+            if (st.filePath && st.lastMtime != null) {
+              targets.push({
+                path: st.filePath,
+                lastMtime: st.lastMtime,
+                isDirty: !!st.isDirty,
+                fileName: st.fileName,
+                isSubTab: true,
+                groupId: tab.id,
+                tabId: st.id,
+              });
             }
-          } catch { /* ignore */ }
+          }
+        } else if (tab.filePath && tab.lastMtime != null) {
+          targets.push({
+            path: tab.filePath,
+            lastMtime: tab.lastMtime,
+            isDirty: !!tab.isDirty,
+            fileName: tab.fileName,
+            isSubTab: false,
+            tabId: tab.id,
+          });
         }
       }
+
+      if (targets.length === 0) return;
+
+      const uniquePaths = Array.from(new Set(targets.map(t => t.path)));
+      let mtimes: [string, number][];
+      try {
+        mtimes = await invoke('get_files_mtime', { paths: uniquePaths }) as [string, number][];
+      } catch { return; }
+      const mtimeMap = new Map(mtimes);
+
+      for (const target of targets) {
+        const currentMtime = mtimeMap.get(target.path);
+        if (currentMtime == null || currentMtime <= target.lastMtime) continue;
+
+        if (!target.isDirty) {
+          // Clean file: auto-reload silently from disk
+          try {
+            const newContent = await invoke('read_file', { path: target.path }) as string;
+            if (target.isSubTab && target.groupId) {
+              tabsStore.updateSubTabDiskContent(target.groupId, target.tabId, newContent, currentMtime);
+              if (activeGroupTab && activeGroupTab.id === target.groupId && activeGroupTab.subTabs) {
+                const sub = activeGroupTab.subTabs.find(s => s.id === target.tabId);
+                if (sub) {
+                  sub.content = newContent;
+                  sub.lastMtime = currentMtime;
+                }
+              }
+            } else {
+              tabsStore.updateTabContent(target.tabId, newContent, currentMtime);
+              if (target.tabId === state.activeTabId) {
+                const previous = content;
+                content = newContent;
+                await replaceContentKeepingPlace(content, previous);
+              }
+            }
+          } catch { /* file may have been temporarily locked/deleted */ }
+        } else {
+          // Dirty tab: conflict dialog
+          const keepLocal = await ask(
+            $t('tabs.external_change_msg', { fileName: target.fileName }),
+            {
+              title: $t('tabs.external_change_title'),
+              kind: 'warning',
+              okLabel: $t('tabs.keep_local'),
+              cancelLabel: $t('tabs.load_from_disk'),
+            }
+          );
+          if (keepLocal) {
+            if (target.isSubTab && target.groupId) {
+              tabsStore.updateSubTabDiskContent(target.groupId, target.tabId, '', currentMtime);
+            } else {
+              tabsStore.updateTabMtime(target.tabId, currentMtime);
+            }
+          } else {
+            try {
+              const newContent = await invoke('read_file', { path: target.path }) as string;
+              if (target.isSubTab && target.groupId) {
+                tabsStore.updateSubTabDiskContent(target.groupId, target.tabId, newContent, currentMtime);
+                if (activeGroupTab && activeGroupTab.id === target.groupId && activeGroupTab.subTabs) {
+                  const sub = activeGroupTab.subTabs.find(s => s.id === target.tabId);
+                  if (sub) {
+                    sub.content = newContent;
+                    sub.lastMtime = currentMtime;
+                  }
+                }
+              } else {
+                tabsStore.updateTabContent(target.tabId, newContent, currentMtime);
+                if (target.tabId === state.activeTabId) {
+                  const previous = content;
+                  content = newContent;
+                  await replaceContentKeepingPlace(content, previous);
+                }
+              }
+            } catch { /* ignore */ }
+          }
+        }
+      }
+    } finally {
+      isCheckingChanges = false;
     }
+  }
+
+  // Parallel split view resize & reorder state
+  let parallelContainerEl = $state<HTMLElement | null>(null);
+  let parallelPaneWidths = $state<number[]>([]);
+  let isResizingSplit = $state(false);
+  let resizeSplitIndex = $state<number | null>(null);
+  let dragPaneIndex = $state<number | null>(null);
+  let dragPaneTargetIndex = $state<number | null>(null);
+
+  function getPaneWidthPct(subIdx: number, totalCount: number): number {
+    if (parallelPaneWidths.length === totalCount && parallelPaneWidths[subIdx] != null) {
+      return parallelPaneWidths[subIdx];
+    }
+    return 100 / totalCount;
+  }
+
+  function resetEqualWidths(count: number) {
+    const equalPct = 100 / count;
+    parallelPaneWidths = Array(count).fill(equalPct);
+  }
+
+  function startResizeSplitter(e: PointerEvent, dividerIdx: number) {
+    if (e.button !== 0 || !parallelContainerEl || !activeGroupTab?.subTabs) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    const count = activeGroupTab.subTabs.length;
+    if (parallelPaneWidths.length !== count) {
+      const equalPct = 100 / count;
+      parallelPaneWidths = Array(count).fill(equalPct);
+    }
+
+    isResizingSplit = true;
+    resizeSplitIndex = dividerIdx;
+    const startX = e.clientX;
+    const startWidths = [...parallelPaneWidths];
+    const containerWidth = parallelContainerEl.clientWidth;
+
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    function onMove(ev: PointerEvent) {
+      if (containerWidth <= 0) return;
+      const dx = ev.clientX - startX;
+      const dPct = (dx / containerWidth) * 100;
+
+      const leftIdx = dividerIdx;
+      const rightIdx = dividerIdx + 1;
+      const minPct = 15;
+      const totalTwo = startWidths[leftIdx] + startWidths[rightIdx];
+
+      let newLeft = Math.max(minPct, Math.min(totalTwo - minPct, startWidths[leftIdx] + dPct));
+      let newRight = totalTwo - newLeft;
+
+      const nextWidths = [...startWidths];
+      nextWidths[leftIdx] = newLeft;
+      nextWidths[rightIdx] = newRight;
+      parallelPaneWidths = nextWidths;
+    }
+
+    function onUp() {
+      isResizingSplit = false;
+      resizeSplitIndex = null;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+    }
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+  }
+
+  function handlePaneHeaderPointerDown(e: PointerEvent, groupId: string, subIndex: number) {
+    if (e.button !== 0) return;
+    if ((e.target as HTMLElement).closest('.pane-action-btn')) return;
+    e.stopPropagation();
+
+    if (!parallelContainerEl || !activeGroupTab?.subTabs) return;
+    const paneEls = Array.from(parallelContainerEl.querySelectorAll<HTMLElement>('.parallel-editor-pane'));
+    if (subIndex >= paneEls.length) return;
+
+    const startX = e.clientX;
+    const initialRects = paneEls.map(p => p.getBoundingClientRect());
+    let isDraggingHeader = false;
+    let targetIdx = subIndex;
+
+    function onHeaderMove(ev: PointerEvent) {
+      ev.preventDefault();
+      const dx = ev.clientX - startX;
+      if (!isDraggingHeader) {
+        if (Math.abs(dx) > 5) {
+          isDraggingHeader = true;
+          dragPaneIndex = subIndex;
+          document.body.style.cursor = 'grabbing';
+        } else {
+          return;
+        }
+      }
+
+      const currentX = ev.clientX;
+      let closest = subIndex;
+      let minDist = Infinity;
+      for (let i = 0; i < initialRects.length; i++) {
+        const center = initialRects[i].left + initialRects[i].width / 2;
+        const dist = Math.abs(currentX - center);
+        if (dist < minDist) {
+          minDist = dist;
+          closest = i;
+        }
+      }
+      targetIdx = closest;
+      dragPaneTargetIndex = targetIdx;
+    }
+
+    function onHeaderUp() {
+      window.removeEventListener('pointermove', onHeaderMove);
+      window.removeEventListener('pointerup', onHeaderUp);
+      window.removeEventListener('pointercancel', onHeaderUp);
+      document.body.style.cursor = '';
+      dragPaneIndex = null;
+      dragPaneTargetIndex = null;
+
+      if (isDraggingHeader && targetIdx !== subIndex) {
+        if (parallelPaneWidths.length === paneEls.length) {
+          const nextWidths = [...parallelPaneWidths];
+          const [movedWidth] = nextWidths.splice(subIndex, 1);
+          nextWidths.splice(targetIdx, 0, movedWidth);
+          parallelPaneWidths = nextWidths;
+        }
+        tabsStore.reorderSubTabs(groupId, subIndex, targetIdx);
+      }
+    }
+
+    window.addEventListener('pointermove', onHeaderMove);
+    window.addEventListener('pointerup', onHeaderUp);
+    window.addEventListener('pointercancel', onHeaderUp);
   }
 
   async function doFileSelect(path: string, mySerial: number) {
@@ -4391,6 +4601,7 @@ ${tr('welcome.tip')}
 
     // Window focus: check for external file changes on all open tabs
     let focusUnlisten: UnlistenFn | undefined;
+    let externalChangePollTimer: ReturnType<typeof setInterval> | undefined;
     if (isTauri && !isIPadOS) {
       getCurrentWindow().onFocusChanged(async ({ payload: focused }) => {
         if (!focused || isCheckingChanges) return;
@@ -4411,9 +4622,15 @@ ${tr('welcome.tip')}
         }
         finally { isCheckingChanges = false; }
       }).then(unlisten => { focusUnlisten = unlisten; });
+
+      // Periodic background polling (every 1.5s) to detect external disk edits immediately
+      externalChangePollTimer = setInterval(() => {
+        checkExternalChanges();
+      }, 1500);
     }
 
     return () => {
+      if (externalChangePollTimer) clearInterval(externalChangePollTimer);
       if (autoSaveTimer) clearInterval(autoSaveTimer);
       if (trashPurgeTimer) clearInterval(trashPurgeTimer);
       menuUnlisteners.forEach(unlisten => unlisten());
@@ -4472,16 +4689,23 @@ ${tr('welcome.tip')}
     <main class="editor-area">
       {#if activeGroupTab}
         <!-- Multi-document Parallel Split View (2-3 files side-by-side) -->
-        <div class="parallel-editors-container">
+        <div class="parallel-editors-container" bind:this={parallelContainerEl}>
           {#each activeGroupTab.subTabs! as subTab, subIdx (subTab.id)}
             <!-- svelte-ignore a11y_click_events_have_key_events -->
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div
               class="parallel-editor-pane"
               class:active-pane={activeGroupTab.activeSubTabId === subTab.id}
+              class:drag-target-pane={dragPaneTargetIndex === subIdx && dragPaneIndex !== subIdx}
+              style="flex: 0 0 {getPaneWidthPct(subIdx, activeGroupTab.subTabs!.length)}%; width: {getPaneWidthPct(subIdx, activeGroupTab.subTabs!.length)}%; max-width: {getPaneWidthPct(subIdx, activeGroupTab.subTabs!.length)}%;"
               onclick={() => tabsStore.setActiveSubTab(activeGroupTab.id, subTab.id)}
             >
-              <div class="parallel-pane-header">
+              <div
+                class="parallel-pane-header"
+                class:dragging-header={dragPaneIndex === subIdx}
+                title="拖拽标题可调整排序"
+                onpointerdown={(e) => handlePaneHeaderPointerDown(e, activeGroupTab.id, subIdx)}
+              >
                 <div class="parallel-pane-info">
                   <span class="pane-flavor-icon">
                     {#if subTab.flavor === 'typst'}
@@ -4538,6 +4762,23 @@ ${tr('welcome.tip')}
                 {/if}
               </div>
             </div>
+
+            {#if subIdx < activeGroupTab.subTabs!.length - 1}
+              <!-- Draggable Split Divider between columns -->
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <div
+                class="parallel-split-divider"
+                class:dragging={isResizingSplit && resizeSplitIndex === subIdx}
+                role="separator"
+                tabindex="-1"
+                aria-orientation="vertical"
+                title="拖动调节区块大小（双击重置均分）"
+                onpointerdown={(e) => startResizeSplitter(e, subIdx)}
+                ondblclick={() => resetEqualWidths(activeGroupTab.subTabs!.length)}
+              >
+                <div class="split-divider-line"></div>
+              </div>
+            {/if}
           {/each}
         </div>
       {:else if activeImageTab}
@@ -5037,11 +5278,15 @@ ${tr('welcome.tip')}
     flex: 1;
     min-width: 0;
     height: 100%;
-    border-right: 1px solid var(--border-color);
     position: relative;
     overflow: hidden;
     animation: parallelPaneReveal var(--duration-fast, 250ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1)) both;
     transition: box-shadow var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1));
+  }
+
+  .parallel-editor-pane.drag-target-pane {
+    outline: 2px dashed var(--accent-color);
+    outline-offset: -2px;
   }
 
   .parallel-editor-pane:nth-child(2) {
@@ -5052,8 +5297,41 @@ ${tr('welcome.tip')}
     animation-delay: calc(var(--duration-stagger, 40ms) * 2);
   }
 
-  .parallel-editor-pane:last-child {
-    border-right: none;
+  /* Draggable Split Divider between columns */
+  .parallel-split-divider {
+    position: relative;
+    width: 10px;
+    margin-left: -5px;
+    margin-right: -5px;
+    height: 100%;
+    z-index: 20;
+    cursor: col-resize;
+    user-select: none;
+    touch-action: none;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+  }
+
+  .split-divider-line {
+    position: absolute;
+    left: 4.5px;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: var(--border-color);
+    transition: background var(--duration-quick, 150ms) ease, width var(--duration-quick, 150ms) ease, box-shadow var(--duration-quick, 150ms) ease;
+    pointer-events: none;
+  }
+
+  .parallel-split-divider:hover .split-divider-line,
+  .parallel-split-divider.dragging .split-divider-line {
+    width: 3px;
+    left: 3.5px;
+    background: var(--accent-color, #0078d4);
+    box-shadow: 0 0 8px rgba(0, 120, 212, 0.5);
   }
 
   .parallel-pane-header {
@@ -5067,10 +5345,16 @@ ${tr('welcome.tip')}
     font-size: var(--font-size-sm, 12px);
     color: var(--text-secondary);
     user-select: none;
+    cursor: grab;
     flex-shrink: 0;
     transition: background var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1)),
                 color var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1)),
                 box-shadow var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1));
+  }
+
+  .parallel-pane-header.dragging-header {
+    cursor: grabbing;
+    background: rgba(0, 120, 212, 0.12) !important;
   }
 
   .parallel-editor-pane.active-pane .parallel-pane-header {
