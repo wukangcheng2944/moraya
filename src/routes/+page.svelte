@@ -60,7 +60,7 @@
   import { captureAnchor, locateAnchor } from '$lib/editor/reading-anchor';
   import { lineOffsetAt } from '$lib/editor/line-metrics';
   import { preloadEnhancementPlugins } from '$lib/editor/setup';
-  import { openFile, saveFile, saveFileAs, loadFile, getFileNameFromPath, readImageAsBlobUrl, migrateTempImages, isImageFile } from '$lib/services/file-service';
+  import { openFile, saveFile, saveFileAs, loadFile, getFileNameFromPath, readImageAsBlobUrl, migrateTempImages, isImageFile, invalidateDocCache } from '$lib/services/file-service';
   import { isTypstFile } from '@moraya/core/typst';
   import { schema } from '$lib/editor/schema';
   import { exportDocument, exportTypstSource, type ExportFormat } from '$lib/services/export-service';
@@ -652,6 +652,52 @@ ${tr('welcome.tip')}
     // v1.23.0: read-only version-preview tab — never save or snapshot.
     const activeTab = tabsStore.getState().tabs.find(t => t.id === tabsStore.getState().activeTabId);
     if (activeTab?.readOnly) return false;
+
+    // Multi-document group tab: save all dirty subTabs or focused subTab
+    if (activeTab?.subTabs && activeTab.subTabs.length >= 2) {
+      let anySaved = false;
+      const subsToSave = activeTab.subTabs.filter(st => st.isDirty || st.id === activeTab.activeSubTabId);
+      for (const sub of subsToSave) {
+        if (sub.readOnly) continue;
+        if (!sub.filePath || asNew) {
+          const suggestedPath = await computeSuggestedPath(sub.content);
+          const kind = sub.flavor === 'typst' ? 'typst' : 'markdown';
+          const savedOk = await saveFileAs(sub.content, suggestedPath, kind);
+          if (savedOk) {
+            const newPath = editorStore.getState().currentFilePath;
+            if (newPath) {
+              tabsStore.updateSubTabPath(activeTab.id, sub.id, newPath, getFileNameFromPath(newPath));
+              tabsStore.updateSubTabContent(activeTab.id, sub.id, sub.content, false);
+              anySaved = true;
+            }
+          }
+        } else {
+          try {
+            if (isTauri) {
+              await invoke('write_file', { path: sub.filePath, content: sub.content });
+              const mtimeRes = await invoke('get_files_mtime', { paths: [sub.filePath] }).catch(() => []) as [string, number][];
+              const newMtime = mtimeRes.length > 0 ? mtimeRes[0][1] : Date.now();
+              tabsStore.updateSubTabDiskContent(activeTab.id, sub.id, sub.content, newMtime);
+            }
+            tabsStore.updateSubTabContent(activeTab.id, sub.id, sub.content, false);
+            invalidateDocCache(sub.filePath);
+            snapshotVersion(sub.filePath, sub.content, opts?.auto ? 'auto' : 'manual');
+            if (!asNew && sub.filePath && getFileNameFromPath(sub.filePath) === 'MORAYA.md') {
+              createMorayaHistory(sub.filePath, sub.content);
+            }
+            anySaved = true;
+          } catch (err) {
+            console.error('[handleSave] Failed to save sub-tab:', sub.filePath, err);
+          }
+        }
+      }
+      if (anySaved) {
+        pendingEditsSince = 0;
+        showToast($t('tabs.saved') || '已保存');
+      }
+      return anySaved;
+    }
+
     const prevFilePath = editorStore.getState().currentFilePath;
     const latestContent = getCurrentContent();
 
@@ -1760,35 +1806,35 @@ ${tr('welcome.tip')}
       return;
     }
 
-    // File shortcuts — on Tauri the native menu accelerator handles
-    // the default bindings; the override loop above handles user-customized
-    // bindings. The hardcoded fallbacks below kick in only for non-Tauri
-    // contexts (web preview, dev mode without a native menu).
-    if (!isTauri && mod && event.key === 's') {
+    // File shortcuts — on Tauri macOS the native menu accelerator handles
+    // default bindings. On Windows and Linux, there is no native menu bar,
+    // so JS must handle these shortcuts directly.
+    // Save (mod+s) is handled directly to ensure reliable document saving.
+    if (mod && (event.key === 's' || event.key === 'S')) {
       event.preventDefault();
-      handleSave(event.shiftKey);
+      void handleSave(event.shiftKey);
       return;
     }
 
-    if (!isTauri && mod && !event.altKey && event.key === 'o' && !event.shiftKey) {
+    if ((!isTauri || !isMacOS) && mod && !event.altKey && (event.key === 'o' || event.key === 'O') && !event.shiftKey) {
       event.preventDefault();
       handleOpenFile();
       return;
     }
 
-    if (!isTauri && mod && !event.shiftKey && (event.key === 'n' || event.key === 'N')) {
+    if ((!isTauri || !isMacOS) && mod && !event.shiftKey && (event.key === 'n' || event.key === 'N')) {
       event.preventDefault();
       handleNewFile();
       return;
     }
 
-    if (!isTauri && mod && event.key === '\\') {
+    if ((!isTauri || !isMacOS) && mod && event.key === '\\') {
       event.preventDefault();
       settingsStore.toggleSidebar();
       return;
     }
 
-    if (!isTauri && mod && event.key === ',') {
+    if ((!isTauri || !isMacOS) && mod && event.key === ',') {
       event.preventDefault();
       showSettings = !showSettings;
       return;
@@ -1796,10 +1842,9 @@ ${tr('welcome.tip')}
 
     // Toggle base mode (Visual ↔ Source) and layout (single ↔ Split) —
     // two-axis model, matches the shortcut handler in the `view.*` cases
-    // above. Tauri's native menu accelerators handle this for the
-    // desktop build; this branch only runs in the browser dev preview.
+    // above.
     const slashMod = isMacOS ? event.metaKey : event.ctrlKey;
-    if (!isTauri && slashMod && !event.shiftKey && (event.key === '/' || event.code === 'Slash')) {
+    if ((!isTauri || !isMacOS) && slashMod && !event.shiftKey && (event.key === '/' || event.code === 'Slash')) {
       event.preventDefault();
       const newBase: 'visual' | 'source' = lastSingleMode === 'visual' ? 'source' : 'visual';
       editorStore.setLastSingleMode(newBase);
@@ -1810,7 +1855,7 @@ ${tr('welcome.tip')}
       return;
     }
 
-    if (!isTauri && slashMod && event.shiftKey && (event.key === '/' || event.key === '?' || event.code === 'Slash')) {
+    if ((!isTauri || !isMacOS) && slashMod && event.shiftKey && (event.key === '/' || event.key === '?' || event.code === 'Slash')) {
       event.preventDefault();
       const newMode: EditorMode = editorMode === 'split' ? lastSingleMode : 'split';
       editorMode = newMode;
@@ -1819,16 +1864,14 @@ ${tr('welcome.tip')}
     }
 
     // AI Panel toggle: Cmd+Shift+I / Ctrl+Shift+I
-    // On Tauri, the native CheckMenuItem accelerator handles this.
-    if (!isTauri && mod && event.shiftKey && (event.key === 'I' || event.key === 'i')) {
+    if ((!isTauri || !isMacOS) && mod && event.shiftKey && (event.key === 'I' || event.key === 'i')) {
       event.preventDefault();
       showAIPanel = !showAIPanel;
       return;
     }
 
     // Outline toggle: Cmd+Shift+O / Ctrl+Shift+O
-    // On Tauri, the native CheckMenuItem accelerator handles this.
-    if (!isTauri && mod && event.shiftKey && (event.key === 'O' || event.key === 'o')) {
+    if ((!isTauri || !isMacOS) && mod && event.shiftKey && (event.key === 'O' || event.key === 'o')) {
       event.preventDefault();
       settingsStore.update({ showOutline: !showOutline });
       return;
@@ -4742,9 +4785,11 @@ ${tr('welcome.tip')}
                     showOutline={false}
                     readOnly={subTab.readOnly ?? false}
                     onContentChange={(newContent) => {
-                      subTab.content = newContent;
-                      subTab.isDirty = true;
-                      tabsStore.updateSubTabContent(activeGroupTab.id, subTab.id, newContent, true);
+                      if (newContent !== subTab.content) {
+                        subTab.content = newContent;
+                        subTab.isDirty = true;
+                        tabsStore.updateSubTabContent(activeGroupTab.id, subTab.id, newContent, true);
+                      }
                     }}
                   />
                 {:else}
@@ -4754,9 +4799,11 @@ ${tr('welcome.tip')}
                     readOnly={subTab.readOnly ?? false}
                     onNotify={showToast}
                     onContentChange={(newContent) => {
-                      subTab.content = newContent;
-                      subTab.isDirty = true;
-                      tabsStore.updateSubTabContent(activeGroupTab.id, subTab.id, newContent, true);
+                      if (newContent !== subTab.content) {
+                        subTab.content = newContent;
+                        subTab.isDirty = true;
+                        tabsStore.updateSubTabContent(activeGroupTab.id, subTab.id, newContent, true);
+                      }
                     }}
                   />
                 {/if}

@@ -94,24 +94,9 @@ function createTabsStore() {
       tabs: state.tabs.map(tab => {
         if (tab.id !== state.activeTabId) return tab;
         if (tab.subTabs && tab.subTabs.length >= 2) {
-          const activeSubId = tab.activeSubTabId || tab.subTabs[0].id;
-          const updatedSubTabs = tab.subTabs.map(st =>
-            st.id === activeSubId
-              ? {
-                  ...st,
-                  content,
-                  isDirty: edState.isDirty,
-                  filePath: edState.currentFilePath,
-                  cursorOffset: edState.cursorOffset,
-                  scrollFraction: edState.scrollFraction,
-                }
-              : st
-          );
-          return {
-            ...tab,
-            subTabs: updatedSubTabs,
-            isDirty: updatedSubTabs.some(st => st.isDirty),
-          };
+          // Parallel sub-tabs are independently managed and synced via updateSubTabContent.
+          // Never overwrite subTabs with edState.content or edState.currentFilePath!
+          return tab;
         }
         return {
           ...tab,
@@ -206,15 +191,15 @@ function createTabsStore() {
      *  When isImage is true, the tab renders an image preview instead of the editor. */
     openFileTab(filePath: string, fileName: string, content: string, mtime?: number | null, skipSync = false, isImage = false): string {
       const state = get({ subscribe });
-      // 1. Check if file is already open in a top-level tab
-      const existing = state.tabs.find(t => t.filePath === filePath);
+      // 1. Check if file is already open in a top-level tab (not a group)
+      const existing = state.tabs.find(t => !t.subTabs && t.filePath === filePath);
       if (existing) {
         if (!skipSync) syncFromEditor();
         let freshTab: TabItem = existing;
         update(s => {
           const updatedTabs = s.tabs.map(t => {
             if (t.id === existing.id) {
-              freshTab = !t.isDirty ? { ...t, content, lastMtime: mtime ?? t.lastMtime } : t;
+              freshTab = (!t.isDirty || !t.content) ? { ...t, content, lastMtime: mtime ?? t.lastMtime, isDirty: false } : t;
               return freshTab;
             }
             return t;
@@ -227,7 +212,7 @@ function createTabsStore() {
 
       // 2. Check if file is open as a sub-tab in a tab group
       for (const tab of state.tabs) {
-        if (tab.subTabs) {
+        if (tab.subTabs && tab.subTabs.length >= 2) {
           const subMatch = tab.subTabs.find(st => st.filePath === filePath);
           if (subMatch) {
             if (!skipSync) syncFromEditor();
@@ -239,7 +224,7 @@ function createTabsStore() {
                 if (t.id === tab.id && t.subTabs) {
                   const updatedSubTabs = t.subTabs.map(st => {
                     if (st.id === subMatch.id) {
-                      freshSub = !st.isDirty ? { ...st, content, lastMtime: mtime ?? st.lastMtime } : st;
+                      freshSub = (!st.isDirty || !st.content) ? { ...st, content, lastMtime: mtime ?? st.lastMtime, isDirty: false } : st;
                       return freshSub;
                     }
                     return st;
@@ -248,6 +233,7 @@ function createTabsStore() {
                     ...t,
                     activeSubTabId: subMatch.id,
                     subTabs: updatedSubTabs,
+                    isDirty: updatedSubTabs.some(st => st.isDirty),
                   };
                 }
                 return t;
@@ -526,13 +512,13 @@ function createTabsStore() {
 
         const groupTab: TabItem = {
           id: generateTabId(),
-          filePath: toMerge[0].filePath,
+          filePath: null,
           fileName: toMerge.map(t => t.fileName).join(' | '),
-          content: toMerge[0].content,
+          content: '',
           isDirty: toMerge.some(t => t.isDirty),
-          cursorOffset: toMerge[0].cursorOffset,
-          scrollFraction: toMerge[0].scrollFraction,
-          lastMtime: toMerge[0].lastMtime,
+          cursorOffset: 0,
+          scrollFraction: 0,
+          lastMtime: null,
           flavor: toMerge[0].flavor,
           subTabs: toMerge.map(t => ({ ...t })),
           activeSubTabId: toMerge[0].id,
@@ -646,6 +632,8 @@ function createTabsStore() {
         const nextActiveSubId = group.activeSubTabId === subTabId ? remaining[0].id : group.activeSubTabId;
         const updatedGroup: TabItem = {
           ...group,
+          filePath: null,
+          content: '',
           subTabs: remaining,
           fileName: remaining.map(t => t.fileName).join(' | '),
           isDirty: remaining.some(t => t.isDirty),
@@ -711,6 +699,24 @@ function createTabsStore() {
             ...tab,
             subTabs: updatedSubTabs,
             isDirty: updatedSubTabs.some(st => st.isDirty),
+          };
+        }),
+      }));
+    },
+
+    /** Update a sub-tab's path and name */
+    updateSubTabPath(groupId: string, subTabId: string, filePath: string, fileName: string) {
+      update(state => ({
+        ...state,
+        tabs: state.tabs.map(tab => {
+          if (tab.id !== groupId || !tab.subTabs) return tab;
+          const updatedSubTabs = tab.subTabs.map(st =>
+            st.id === subTabId ? { ...st, filePath, fileName } : st
+          );
+          return {
+            ...tab,
+            subTabs: updatedSubTabs,
+            fileName: updatedSubTabs.map(s => s.fileName).join(' | '),
           };
         }),
       }));

@@ -123,4 +123,79 @@ describe('tab switching with an unserialized visual editor', () => {
 
     expect(get(tabsStore).tabs.find(t => t.id === first)?.content).toBe('from store');
   });
+
+  describe('parallel tab groups and sub-tab isolation', () => {
+    it('creates groupTab with filePath: null and preserves subTab contents', () => {
+      const tab1 = openDoc('/notes/jinrong1.md', '# 金融1 内容');
+      const tab2 = openDoc('/notes/jinrong2.md', '# 金融2 内容');
+
+      tabsStore.mergeTabs([tab1, tab2]);
+
+      const state = get(tabsStore);
+      const groupTab = state.tabs.find(t => t.subTabs && t.subTabs.length >= 2);
+      expect(groupTab).toBeDefined();
+      expect(groupTab?.filePath).toBeNull();
+      expect(groupTab?.subTabs?.[0].content).toBe('# 金融1 内容');
+      expect(groupTab?.subTabs?.[0].filePath).toBe('/notes/jinrong1.md');
+      expect(groupTab?.subTabs?.[1].content).toBe('# 金融2 内容');
+      expect(groupTab?.subTabs?.[1].filePath).toBe('/notes/jinrong2.md');
+    });
+
+    it('does not clobber subTabs when syncFromEditor is called', () => {
+      const tab1 = openDoc('/notes/doc1.md', '# 文档1');
+      const tab2 = openDoc('/notes/doc2.md', '# 文档2');
+      tabsStore.mergeTabs([tab1, tab2]);
+      const groupTabId = get(tabsStore).activeTabId;
+
+      // Simulate an external single-editor state change or sync
+      editorStore.batchRestore({
+        filePath: null,
+        content: '',
+        isDirty: false,
+        cursorOffset: 0,
+        scrollFraction: 0,
+      });
+
+      // Opening or adding a new tab triggers syncFromEditor()
+      const newTabId = tabsStore.addTab();
+
+      const state = get(tabsStore);
+      const groupTab = state.tabs.find(t => t.id === groupTabId);
+      expect(groupTab?.subTabs?.[0].content).toBe('# 文档1');
+      expect(groupTab?.subTabs?.[1].content).toBe('# 文档2');
+    });
+
+    it('allows reopening a sub-tab file from workspace tree after closing the sub-tab', () => {
+      const tabA = openDoc('/notes/a.md', '# A 内容');
+      const tabB = openDoc('/notes/b.md', '# B 内容');
+      tabsStore.mergeTabs([tabA, tabB]);
+
+      const groupTab = get(tabsStore).tabs.find(t => t.subTabs && t.subTabs.length >= 2)!;
+      const subAId = groupTab.subTabs![0].id;
+
+      // Close sub-tab A (金融1 scenario)
+      tabsStore.closeSubTab(groupTab.id, subAId);
+
+      // Now click on /notes/a.md in the file tree to reopen it
+      const reopenedId = tabsStore.openFileTab('/notes/a.md', 'a.md', '# A 内容');
+      expect(reopenedId).toBeDefined();
+
+      const state = get(tabsStore);
+      const reopenedTab = state.tabs.find(t => t.filePath === '/notes/a.md');
+      expect(reopenedTab).toBeDefined();
+      expect(reopenedTab?.content).toBe('# A 内容');
+      expect(state.activeTabId).toBe(reopenedTab?.id);
+    });
+
+    it('recovers content when an existing tab has empty content and is reopened from tree', () => {
+      // If a tab had empty content for any reason
+      const tabId = tabsStore.openFileTab('/notes/empty.md', 'empty.md', '');
+      expect(get(tabsStore).tabs.find(t => t.id === tabId)?.content).toBe('');
+
+      // User clicks empty.md in sidebar which passes disk content
+      tabsStore.openFileTab('/notes/empty.md', 'empty.md', '# 恢复的磁盘内容');
+      expect(get(tabsStore).tabs.find(t => t.id === tabId)?.content).toBe('# 恢复的磁盘内容');
+      expect(get(tabsStore).tabs.find(t => t.id === tabId)?.isDirty).toBe(false);
+    });
+  });
 });

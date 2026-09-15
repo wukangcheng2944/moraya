@@ -4,6 +4,7 @@ import { readFile } from '@tauri-apps/plugin-fs';
 import { editorStore } from '../stores/editor-store';
 import { filesStore, type FileEntry } from '../stores/files-store';
 import { invalidateDocCache } from '../editor/doc-cache';
+export { invalidateDocCache };
 import { computeImageDir, computeImageRelativePath } from './ai/image-path-utils';
 import { get } from 'svelte/store';
 import {

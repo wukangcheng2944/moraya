@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { editorStore } from '../stores/editor-store';
   import { tabsStore, type TabItem } from '../stores/tabs-store';
   import { t } from '$lib/i18n';
@@ -44,17 +44,41 @@
   // Tauri window API (null in plain browser for iPad testing)
   const appWindow: TauriWindow | null = isTauri ? getCurrentWindow() : null;
 
+  let unlistenResized: (() => void) | undefined;
+
   async function checkMaximized() {
-    if (appWindow) isMaximized = await appWindow.isMaximized();
+    if (appWindow) {
+      try {
+        isMaximized = await appWindow.isMaximized();
+      } catch { /* ignore */ }
+    }
   }
+
+  onMount(async () => {
+    if (appWindow) {
+      await checkMaximized();
+      try {
+        unlistenResized = await appWindow.onResized(async () => {
+          await checkMaximized();
+        });
+      } catch (e) {
+        console.error('[TitleBar] Failed to listen to resize event:', e);
+      }
+    }
+  });
 
   function handleMinimize() {
     appWindow?.minimize();
   }
 
-  function handleMaximize() {
-    appWindow?.toggleMaximize();
-    checkMaximized();
+  async function handleMaximize() {
+    if (!appWindow) return;
+    try {
+      await appWindow.toggleMaximize();
+      await checkMaximized();
+    } catch (e) {
+      console.error('[TitleBar] toggleMaximize failed:', e);
+    }
   }
 
   function handleClose() {
@@ -97,6 +121,7 @@
   onDestroy(() => {
     unsubEditor();
     if (mergeTimer) clearTimeout(mergeTimer);
+    unlistenResized?.();
   });
 
   let displayTitle = $derived(isDirty ? `${title} - ${$t('titlebar.unsaved')}` : title);
@@ -1044,7 +1069,7 @@
         <rect fill="currentColor" width="10" height="1"/>
       </svg>
     </button>
-    <button class="titlebar-btn" onclick={handleMaximize} title={$t('titlebar.maximize')}>
+    <button class="titlebar-btn" onclick={handleMaximize} title={isMaximized ? $t('titlebar.restore') : $t('titlebar.maximize')}>
       {#if isMaximized}
         <svg width="10" height="10" viewBox="0 0 10 10">
           <path fill="currentColor" d="M2 0h6v2H2zM0 2h8v8H0zM1 3h6v6H1z" fill-rule="evenodd"/>
