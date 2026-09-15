@@ -2888,6 +2888,10 @@ ${tr('welcome.tip')}
     e.stopPropagation();
 
     if (!parallelContainerEl || !activeGroupTab?.subTabs) return;
+    const clickedSub = activeGroupTab.subTabs[subIndex];
+    if (clickedSub) {
+      tabsStore.setActiveSubTab(groupId, clickedSub.id);
+    }
     const paneEls = Array.from(parallelContainerEl.querySelectorAll<HTMLElement>('.parallel-editor-pane'));
     if (subIndex >= paneEls.length) return;
 

@@ -177,6 +177,16 @@
     if (activeSubDragCleanup) {
       activeSubDragCleanup();
     }
+    justFinishedSubDrag = false;
+
+    // Instantly activate this sub-tab on press (pointerdown)
+    // Provides immediate visual feedback so rapid clicking never lags or misses
+    const grp = tabs.find(t => t.id === groupId);
+    const targetSub = grp?.subTabs?.[subIndex];
+    if (targetSub) {
+      tabsStore.setActiveSubTab(groupId, targetSub.id);
+      onSwitchTab(groupId);
+    }
 
     const el = event.currentTarget as HTMLElement;
     const container = el.closest('.sub-tabs-strip') as HTMLElement | null;
@@ -220,7 +230,7 @@
       e.preventDefault();
       const dx = e.clientX - startX;
       if (!isDragging) {
-        if (Math.abs(dx) > 3) {
+        if (Math.abs(dx) > 6) {
           isDragging = true;
           el.classList.add('sub-dragging');
           document.body.style.cursor = 'grabbing';
@@ -262,7 +272,7 @@
 
     function finishDrag() {
       cleanupEvents();
-      if (!isDragging) {
+      if (!isDragging || currentIndex === originIndex) {
         resetAllChipStyles(chipEls);
         dragSubGroupId = null;
         dragSubIndex = null;
@@ -271,7 +281,7 @@
       }
 
       justFinishedSubDrag = true;
-      setTimeout(() => { justFinishedSubDrag = false; }, 120);
+      setTimeout(() => { justFinishedSubDrag = false; }, 80);
 
       // Compute resting offset for dragged chip into its target slot
       const finalOffset = initialRects[currentIndex].left - initialRects[originIndex].left;
@@ -313,6 +323,7 @@
       dragSubGroupId = null;
       dragSubIndex = null;
       activeSubDragCleanup = null;
+      justFinishedSubDrag = false;
     };
 
     window.addEventListener('pointermove', onSubMove);
