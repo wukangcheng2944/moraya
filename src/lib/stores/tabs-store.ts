@@ -459,6 +459,7 @@ function createTabsStore() {
     mergeTabs(tabIds: string[]) {
       if (!tabIds || tabIds.length < 2) return;
       syncFromEditor();
+      let firstToMerge: TabItem | null = null;
       update(state => {
         // Collect matching tabs in their original order in state.tabs
         const matched: TabItem[] = [];
@@ -477,6 +478,7 @@ function createTabsStore() {
         // Limit to max 3 tabs
         const toMerge = matched.slice(0, 3);
         if (toMerge.length < 2) return state;
+        firstToMerge = toMerge[0];
 
         const groupTab: TabItem = {
           id: generateTabId(),
@@ -496,12 +498,14 @@ function createTabsStore() {
         const insertAt = Math.min(firstIndex >= 0 ? firstIndex : 0, remaining.length);
         remaining.splice(insertAt, 0, groupTab);
 
-        syncToEditor(toMerge[0]);
         return {
           tabs: remaining,
           activeTabId: groupTab.id,
         };
       });
+      if (firstToMerge) {
+        syncToEditor(firstToMerge);
+      }
     },
 
     /** Reorder sub-tabs inside a Tab Group */

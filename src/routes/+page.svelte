@@ -343,6 +343,7 @@ ${tr('welcome.tip')}
   let aiConfigured = $state(false);
   let aiLoading = $state(false);
   let aiError = $state(false);
+  let fileSelectSerial = 0;
 
   // Top-level store subscriptions — do NOT wrap in $effect().
   // In Svelte 5, $effect tracks reads inside subscribe callbacks, causing
@@ -2181,7 +2182,6 @@ ${tr('welcome.tip')}
   // create overlapping async loadFile → replaceAll chains, each expensive.
   // Debounce + serial guard: rapid clicks are coalesced into a single operation,
   // preventing concurrent guardUnsavedChanges/save/loadFile/replaceAll calls entirely.
-  let fileSelectSerial = 0;
   let fileSelectDebounce: ReturnType<typeof setTimeout> | undefined;
 
   /** Schedule scroll-to-keyword + flash highlight after editor renders */

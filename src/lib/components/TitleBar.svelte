@@ -106,10 +106,17 @@
   let selectedTabIds = $state<string[]>([]);
 
   function handleWindowKeyUp(e: KeyboardEvent) {
-    if (e.key === 'Control' || e.key === 'Meta') {
+    if (e.key === 'Control' || e.key === 'Meta' || e.keyCode === 17 || e.keyCode === 91 || e.keyCode === 93) {
       if (selectedTabIds.length >= 2 && selectedTabIds.length <= 3) {
         tabsStore.mergeTabs(selectedTabIds);
       }
+      selectedTabIds = [];
+    }
+  }
+
+  function handleWindowPointerUp(e: PointerEvent) {
+    if (selectedTabIds.length >= 2 && !e.ctrlKey && !e.metaKey) {
+      tabsStore.mergeTabs(selectedTabIds);
       selectedTabIds = [];
     }
   }
@@ -129,16 +136,9 @@
       chip.style.transform = '';
       chip.style.transition = '';
       chip.style.zIndex = '';
-      chip.style.pointerEvents = '';
       chip.classList.remove('sub-dragging');
     }
     document.body.style.cursor = '';
-  }
-
-  function handleGlobalPointerUp() {
-    if (activeSubDragCleanup) {
-      activeSubDragCleanup();
-    }
   }
 
   function handleSubTabPointerDown(event: PointerEvent, groupId: string, subIndex: number) {
@@ -182,9 +182,7 @@
         } else if (targetIdx < originIndex) {
           if (j < originIndex && j >= targetIdx) {
             // Chip j moves right to position of j + 1
-            const targetRight = initialRects[j + 1].right;
-            const targetLeft = targetRight - initialRects[j].width;
-            shift = targetLeft - initialRects[j].left;
+            shift = initialRects[j + 1].left - initialRects[j].left;
           }
         }
         chip.style.transform = shift === 0 ? '' : `translateX(${shift}px)`;
@@ -204,7 +202,6 @@
             } else {
               chip.style.transition = 'none';
               chip.style.zIndex = '20';
-              chip.style.pointerEvents = 'none';
             }
           });
         } else {
@@ -243,17 +240,10 @@
       }
 
       justFinishedSubDrag = true;
-      setTimeout(() => { justFinishedSubDrag = false; }, 100);
+      setTimeout(() => { justFinishedSubDrag = false; }, 120);
 
       // Compute resting offset for dragged chip into its target slot
-      let finalOffset = 0;
-      if (currentIndex > originIndex) {
-        const targetRight = initialRects[currentIndex].right;
-        const targetLeft = targetRight - initialRects[originIndex].width;
-        finalOffset = targetLeft - initialRects[originIndex].left;
-      } else if (currentIndex < originIndex) {
-        finalOffset = initialRects[currentIndex].left - initialRects[originIndex].left;
-      }
+      const finalOffset = initialRects[currentIndex].left - initialRects[originIndex].left;
 
       el.style.transition = 'transform var(--duration-quick, 180ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1))';
       el.style.transform = `translateX(${finalOffset}px)`;
@@ -281,8 +271,9 @@
     function cleanupEvents() {
       try { el.releasePointerCapture(pointerId); } catch (_) {}
       window.removeEventListener('pointermove', onSubMove);
-      window.removeEventListener('pointerup', finishDrag);
-      window.removeEventListener('pointercancel', finishDrag);
+      window.removeEventListener('pointerup', finishDrag, true);
+      window.removeEventListener('pointercancel', finishDrag, true);
+      window.removeEventListener('blur', finishDrag);
       el.removeEventListener('lostpointercapture', finishDrag);
     }
 
@@ -295,8 +286,9 @@
     };
 
     window.addEventListener('pointermove', onSubMove);
-    window.addEventListener('pointerup', finishDrag);
-    window.addEventListener('pointercancel', finishDrag);
+    window.addEventListener('pointerup', finishDrag, true);
+    window.addEventListener('pointercancel', finishDrag, true);
+    window.addEventListener('blur', finishDrag);
     el.addEventListener('lostpointercapture', finishDrag);
   }
 
@@ -537,13 +529,7 @@
             if (tabA && tabB) {
               tabsStore.mergeTabs([tabA.id, tabB.id]);
             }
-            mergeTargetIndex = null;
-            mergeTimer = null;
-            document.body.style.cursor = '';
-            dragTabIndex = null;
-            dropTargetIndex = null;
-            isDragging = false;
-            try { el.releasePointerCapture(pointerId); } catch (_) {}
+            onUp();
           }, 500);
         }
       } else {
@@ -651,9 +637,12 @@
     }
 
     async function onUp() {
-      el.releasePointerCapture(pointerId);
-      el.removeEventListener('pointermove', onMove);
-      el.removeEventListener('pointerup', onUp);
+      try { el.releasePointerCapture(pointerId); } catch (_) {}
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp, true);
+      window.removeEventListener('pointercancel', onUp, true);
+      window.removeEventListener('blur', onUp);
+      el.removeEventListener('lostpointercapture', onUp);
 
       // Snapshot all state into locals before any async work.
       // A new drag could start while we're awaiting, resetting component-level vars.
@@ -671,7 +660,6 @@
         clearTimeout(mergeTimer);
         mergeTimer = null;
       }
-      const savedMergeTarget = mergeTargetIndex;
       mergeTargetIndex = null;
 
       // Reset drag state immediately so a new drag can start cleanly
@@ -709,12 +697,6 @@
         } else if (savedCrossTarget) {
           // Single-tab or pre-detach attach
           await onAttachTab(savedDragTabIndex, savedCrossTarget);
-        } else if (savedMergeTarget !== null && savedDragTabIndex !== savedMergeTarget) {
-          const tabA = tabs[savedDragTabIndex];
-          const tabB = tabs[savedMergeTarget];
-          if (tabA && tabB) {
-            tabsStore.mergeTabs([tabA.id, tabB.id]);
-          }
         } else if (savedDropTargetIndex !== null && savedDragTabIndex !== savedDropTargetIndex) {
           onReorderTabs(savedDragTabIndex, savedDropTargetIndex);
         }
@@ -730,8 +712,11 @@
       }
     }
 
-    el.addEventListener('pointermove', onMove);
-    el.addEventListener('pointerup', onUp);
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp, true);
+    window.addEventListener('pointercancel', onUp, true);
+    window.addEventListener('blur', onUp);
+    el.addEventListener('lostpointercapture', onUp);
   }
 
   // Right-click context menu state
@@ -860,19 +845,17 @@
   onkeydown={onWindowKeydownNewDoc}
   onkeyup={handleWindowKeyUp}
   onresize={onNewDocReposition}
-  onpointerup={handleGlobalPointerUp}
-  onpointercancel={handleGlobalPointerUp}
-  onblur={handleGlobalPointerUp}
+  onpointerup={handleWindowPointerUp}
 />
 
-<div class="titlebar no-select" data-tauri-drag-region
+<div class="titlebar no-select"
   onmousedown={handleDragStart} ondblclick={handleDblClick}
   oncontextmenu={handleContextMenu}>
   <div class="titlebar-left">
     <span class="app-name" data-tauri-drag-region>Moraya</span>
   </div>
 
-  <div class="titlebar-center" data-tauri-drag-region>
+  <div class="titlebar-center">
     {#if showInlineTabs}
       <!-- macOS: tabs embedded in 28px overlay -->
       {#if canScrollLeft}
@@ -880,7 +863,7 @@
           <svg width="6" height="8" viewBox="0 0 6 8"><path fill="currentColor" d="M5 0L0 4l5 4z"/></svg>
         </button>
       {/if}
-      <div class="mac-tabs-scroll" bind:this={macScrollEl} onscroll={updateScrollState}>
+      <div class="mac-tabs-scroll" data-tauri-drag-region="false" bind:this={macScrollEl} onscroll={updateScrollState}>
         {#each tabs as tab, index (tab.id)}
           {#if externalDropIndex === index}
             <div class="external-drop-indicator"></div>
@@ -890,13 +873,14 @@
             <!-- svelte-ignore a11y_click_events_have_key_events -->
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div class="tab-group tab-entry"
+              data-tauri-drag-region="false"
               class:active={tab.id === activeTabId}
               class:ctrl-selected={selectedTabIds.includes(tab.id)}
               class:merge-hover={mergeTargetIndex === index}
               class:drag-over={dropTargetIndex === index && dragTabIndex !== index}
               class:dragging={dragTabIndex === index}
               class:detaching={isDetaching && dragTabIndex === index}
-              onclick={() => { if (!isDragging) onSwitchTab(tab.id); }}
+              onclick={(e) => { if (e.ctrlKey || e.metaKey) return; if (!isDragging) onSwitchTab(tab.id); }}
               onauxclick={(e) => { if (e.button === 1) { e.preventDefault(); handleTabClose(e, tab); } }}
               onpointerdown={(e) => handleTabPointerDown(e, index)}>
               <span class="group-icon" title="并列文档组">
@@ -906,6 +890,7 @@
                 {#each tab.subTabs as subTab, subIdx (subTab.id)}
                   <div
                     class="sub-tab-chip"
+                    data-tauri-drag-region="false"
                     class:active={tab.activeSubTabId === subTab.id}
                     class:sub-dragging={dragSubIndex === subIdx && dragSubGroupId === tab.id}
                     onpointerdown={(e) => handleSubTabPointerDown(e, tab.id, subIdx)}
@@ -958,13 +943,14 @@
             <!-- Standard single tab -->
             <!-- svelte-ignore a11y_consider_explicit_label -->
             <button class="tab-item tab-entry" class:active={tab.id === activeTabId}
+              data-tauri-drag-region="false"
               class:typst={tab.flavor === 'typst'}
               class:ctrl-selected={selectedTabIds.includes(tab.id)}
               class:merge-hover={mergeTargetIndex === index}
               class:drag-over={dropTargetIndex === index && dragTabIndex !== index}
               class:dragging={dragTabIndex === index}
               class:detaching={isDetaching && dragTabIndex === index}
-              onclick={() => { if (!isDragging) onSwitchTab(tab.id); }}
+              onclick={(e) => { if (e.ctrlKey || e.metaKey) return; if (!isDragging) onSwitchTab(tab.id); }}
               onauxclick={(e) => { if (e.button === 1) { e.preventDefault(); handleTabClose(e, tab); } }}
               onpointerdown={(e) => handleTabPointerDown(e, index)}>
               <span class="tab-icon">
@@ -1444,18 +1430,20 @@
     flex-shrink: 0;
     max-width: 110px;
     user-select: none;
+    -webkit-app-region: no-drag;
+    touch-action: none;
     transition: transform var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1)),
                 background var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1)),
                 color var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1)),
                 box-shadow var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1));
   }
-  .sub-tab-chip:hover {
+  .sub-tab-chip:not(.sub-dragging):hover {
     background: rgba(0, 0, 0, 0.09);
     color: var(--text-primary);
     transform: translateY(-1px);
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.06);
   }
-  .sub-tab-chip:active {
+  .sub-tab-chip:not(.sub-dragging):active {
     transform: translateY(0) scale(0.98);
   }
   .sub-tab-chip.active {
