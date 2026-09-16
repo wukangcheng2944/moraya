@@ -2889,7 +2889,7 @@ ${tr('welcome.tip')}
 
     if (!parallelContainerEl || !activeGroupTab?.subTabs) return;
     const clickedSub = activeGroupTab.subTabs[subIndex];
-    if (clickedSub) {
+    if (clickedSub && activeGroupTab.activeSubTabId !== clickedSub.id) {
       tabsStore.setActiveSubTab(groupId, clickedSub.id);
     }
     const paneEls = Array.from(parallelContainerEl.querySelectorAll<HTMLElement>('.parallel-editor-pane'));
@@ -4745,7 +4745,7 @@ ${tr('welcome.tip')}
               class:active-pane={activeGroupTab.activeSubTabId === subTab.id}
               class:drag-target-pane={dragPaneTargetIndex === subIdx && dragPaneIndex !== subIdx}
               style="flex: 0 0 {getPaneWidthPct(subIdx, activeGroupTab.subTabs!.length)}%; width: {getPaneWidthPct(subIdx, activeGroupTab.subTabs!.length)}%; max-width: {getPaneWidthPct(subIdx, activeGroupTab.subTabs!.length)}%;"
-              onclick={() => tabsStore.setActiveSubTab(activeGroupTab.id, subTab.id)}
+              onclick={() => { if (activeGroupTab.activeSubTabId !== subTab.id) tabsStore.setActiveSubTab(activeGroupTab.id, subTab.id); }}
             >
               <div
                 class="parallel-pane-header"

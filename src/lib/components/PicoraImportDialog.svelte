@@ -3,6 +3,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { openUrl } from '@tauri-apps/plugin-opener';
+  import { isTauri } from '$lib/utils/platform';
   import { t } from '$lib/i18n';
   import { settingsStore } from '$lib/stores/settings-store';
   import {
@@ -173,9 +174,11 @@
     } catch { /* ignore */ }
 
     // 2) Subscribe to runtime deep-link events.
-    unlisten = await listen<PicoraDeeplinkPayload>('picora-import-request', event => {
-      void handleDeeplink(event.payload);
-    });
+    if (isTauri) {
+      unlisten = await listen<PicoraDeeplinkPayload>('picora-import-request', event => {
+        void handleDeeplink(event.payload);
+      });
+    }
 
     // 3) In-app trigger from "Add Picora" menu button.
     window.addEventListener('moraya:picora-open-manual', manualOpenHandler);

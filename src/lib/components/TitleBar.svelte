@@ -179,13 +179,16 @@
     }
     justFinishedSubDrag = false;
 
-    // Instantly activate this sub-tab on press (pointerdown)
+    // Instantly activate this sub-tab on press (pointerdown) if not already active
     // Provides immediate visual feedback so rapid clicking never lags or misses
     const grp = tabs.find(t => t.id === groupId);
     const targetSub = grp?.subTabs?.[subIndex];
     if (targetSub) {
-      tabsStore.setActiveSubTab(groupId, targetSub.id);
-      onSwitchTab(groupId);
+      const isAlreadyActive = (groupId === activeTabId && grp?.activeSubTabId === targetSub.id);
+      if (!isAlreadyActive) {
+        tabsStore.setActiveSubTab(groupId, targetSub.id);
+        onSwitchTab(groupId);
+      }
     }
 
     const el = event.currentTarget as HTMLElement;
@@ -949,12 +952,13 @@
                   <div
                     class="sub-tab-chip"
                     data-tauri-drag-region="false"
-                    class:active={tab.activeSubTabId === subTab.id}
+                    class:active={tab.id === activeTabId && tab.activeSubTabId === subTab.id}
                     class:sub-dragging={dragSubIndex === subIdx && dragSubGroupId === tab.id}
                     onpointerdown={(e) => handleSubTabPointerDown(e, tab.id, subIdx)}
                     onclick={(e) => {
                       e.stopPropagation();
                       if (justFinishedSubDrag) return;
+                      if (tab.id === activeTabId && tab.activeSubTabId === subTab.id) return;
                       tabsStore.setActiveSubTab(tab.id, subTab.id);
                       onSwitchTab(tab.id);
                     }}

@@ -215,6 +215,9 @@ function createTabsStore() {
         if (tab.subTabs && tab.subTabs.length >= 2) {
           const subMatch = tab.subTabs.find(st => st.filePath === filePath);
           if (subMatch) {
+            if (state.activeTabId === tab.id && tab.activeSubTabId === subMatch.id) {
+              return tab.id;
+            }
             if (!skipSync) syncFromEditor();
             let freshSub: TabItem = subMatch;
             update(s => ({
@@ -657,10 +660,14 @@ function createTabsStore() {
       const s = get({ subscribe });
       const group = s.tabs.find(t => t.id === groupId);
       if (!group?.subTabs) return;
+      if (s.activeTabId === groupId && group.activeSubTabId === subTabId) {
+        return; // Already active sub-tab in active group: no-op
+      }
       const sub = group.subTabs.find(st => st.id === subTabId);
       if (!sub) return;
       update(state => ({
         ...state,
+        activeTabId: groupId,
         tabs: state.tabs.map(tab =>
           tab.id === groupId ? { ...tab, activeSubTabId: subTabId } : tab
         ),
@@ -738,3 +745,7 @@ function createTabsStore() {
 }
 
 export const tabsStore = createTabsStore();
+
+if (typeof window !== 'undefined') {
+  (window as any).__tabsStore = tabsStore;
+}

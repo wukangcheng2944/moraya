@@ -197,5 +197,40 @@ describe('tab switching with an unserialized visual editor', () => {
       expect(get(tabsStore).tabs.find(t => t.id === tabId)?.content).toBe('# 恢复的磁盘内容');
       expect(get(tabsStore).tabs.find(t => t.id === tabId)?.isDirty).toBe(false);
     });
+
+    it('does not trigger redundant updates when sub-tab is already active', () => {
+      const tabA = openDoc('/notes/geo1.md', '# 地缘1');
+      const tabB = openDoc('/notes/geo2.md', '# 地缘2');
+      tabsStore.mergeTabs([tabA, tabB]);
+
+      const groupTab = get(tabsStore).tabs.find(t => t.subTabs?.some(st => st.id === tabA))!;
+      const subAId = groupTab.subTabs![0].id;
+      const subBId = groupTab.subTabs![1].id;
+
+      // Activate subTab B (地缘2)
+      tabsStore.setActiveSubTab(groupTab.id, subBId);
+      expect(get(tabsStore).tabs.find(t => t.id === groupTab.id)?.activeSubTabId).toBe(subBId);
+
+      // Track store subscriber notifications
+      let notifyCount = 0;
+      const unsubscribe = tabsStore.subscribe(() => {
+        notifyCount++;
+      });
+      // Initial subscribe triggers 1 call
+      expect(notifyCount).toBe(1);
+
+      // Calling setActiveSubTab for subBId again when it is already active in the active group:
+      tabsStore.setActiveSubTab(groupTab.id, subBId);
+
+      // Should be an exact NO-OP: notifyCount remains 1, no store mutations
+      expect(notifyCount).toBe(1);
+
+      // openFileTab for the already active sub-tab should also be a NO-OP
+      const sameId = tabsStore.openFileTab('/notes/geo2.md', 'geo2.md', '# 地缘2');
+      expect(sameId).toBe(groupTab.id);
+      expect(notifyCount).toBe(1);
+
+      unsubscribe();
+    });
   });
 });
