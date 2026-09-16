@@ -1251,7 +1251,7 @@
     position: relative;
     transition: background var(--transition-fast), color var(--transition-fast);
   }
-  .tab-item:hover {
+  .tab-item:not(.active):hover {
     background: rgba(0, 0, 0, 0.04);
     color: var(--text-primary);
   }
@@ -1263,6 +1263,10 @@
     border-bottom: 1px solid var(--bg-primary, #ffffff);
     margin-bottom: -1px;
     z-index: 2;
+  }
+  .tab-item.active:hover {
+    background: color-mix(in srgb, var(--bg-primary, #ffffff) 95%, var(--text-primary, #000000));
+    border-bottom-color: color-mix(in srgb, var(--bg-primary, #ffffff) 95%, var(--text-primary, #000000));
   }
   .tab-icon {
     display: flex;
@@ -1425,7 +1429,7 @@
                 border-color var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1)),
                 box-shadow var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1));
   }
-  .tab-group:hover {
+  .tab-group:not(.active):hover {
     background: rgba(0, 0, 0, 0.05);
     color: var(--text-primary);
   }
@@ -1438,6 +1442,10 @@
     margin-bottom: -1px;
     z-index: 2;
     box-shadow: 0 -1px 3px rgba(0, 0, 0, 0.03);
+  }
+  .tab-group.active:hover {
+    background: color-mix(in srgb, var(--bg-primary, #ffffff) 97%, var(--text-primary, #000000));
+    border-bottom-color: color-mix(in srgb, var(--bg-primary, #ffffff) 97%, var(--text-primary, #000000));
   }
   .tab-group.dragging {
     opacity: 0.4;
@@ -1500,20 +1508,35 @@
                 color var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1)),
                 box-shadow var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1));
   }
-  .sub-tab-chip:not(.sub-dragging):hover {
-    background: rgba(0, 0, 0, 0.09);
+  /* Inactive chip: white/light turns gray on hover */
+  .sub-tab-chip:not(.active):not(.sub-dragging):hover {
+    background: rgba(0, 0, 0, 0.10);
     color: var(--text-primary);
     transform: translateY(-1px);
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.06);
   }
-  .sub-tab-chip:not(.sub-dragging):active {
+  .sub-tab-chip:not(.active):not(.sub-dragging):active {
+    background: rgba(0, 0, 0, 0.14);
     transform: translateY(0) scale(0.98);
   }
+  /* Active chip: base blue */
   .sub-tab-chip.active {
     background: var(--accent-color, #0078d4);
     color: #ffffff;
     font-weight: 500;
     box-shadow: 0 1px 3px rgba(0, 120, 212, 0.3);
+  }
+  /* Active chip: blue becomes deeper on hover, never turns white! */
+  .sub-tab-chip.active:not(.sub-dragging):hover {
+    background: var(--accent-hover, #005a9e);
+    color: #ffffff;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 6px rgba(0, 90, 158, 0.45);
+  }
+  .sub-tab-chip.active:not(.sub-dragging):active {
+    background: color-mix(in srgb, var(--accent-hover, #005a9e) 85%, #000000);
+    color: #ffffff;
+    transform: translateY(0) scale(0.98);
   }
   .sub-tab-chip.sub-dragging {
     opacity: 0.92 !important;
@@ -1720,13 +1743,37 @@
     background: var(--bg-titlebar, #202020);
     border-bottom-color: var(--border-light, #2d2d2d);
   }
-  :global([data-theme="dark"]) .tab-item:hover {
+  :global([data-theme="dark"]) .tab-item:not(.active):hover {
     background: rgba(255, 255, 255, 0.06);
   }
   :global([data-theme="dark"]) .tab-item.active {
     background: var(--bg-primary, #1e1e1e);
     border-color: var(--border-light, #2d2d2d);
     border-bottom-color: var(--bg-primary, #1e1e1e);
+  }
+  :global([data-theme="dark"]) .tab-item.active:hover {
+    background: color-mix(in srgb, var(--bg-primary, #1e1e1e) 90%, #ffffff);
+    border-bottom-color: color-mix(in srgb, var(--bg-primary, #1e1e1e) 90%, #ffffff);
+  }
+  :global([data-theme="dark"]) .tab-group:not(.active):hover {
+    background: rgba(255, 255, 255, 0.06);
+  }
+  :global([data-theme="dark"]) .tab-group.active {
+    background: var(--bg-primary, #1e1e1e);
+    border-color: var(--border-light, #2d2d2d);
+    border-bottom-color: var(--bg-primary, #1e1e1e);
+  }
+  :global([data-theme="dark"]) .tab-group.active:hover {
+    background: color-mix(in srgb, var(--bg-primary, #1e1e1e) 92%, #ffffff);
+    border-bottom-color: color-mix(in srgb, var(--bg-primary, #1e1e1e) 92%, #ffffff);
+  }
+  :global([data-theme="dark"]) .sub-tab-chip {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-secondary);
+  }
+  :global([data-theme="dark"]) .sub-tab-chip:not(.active):not(.sub-dragging):hover {
+    background: rgba(255, 255, 255, 0.14);
+    color: var(--text-primary);
   }
   :global([data-theme="dark"]) .tab-close:hover {
     background: rgba(255, 255, 255, 0.12);

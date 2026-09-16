@@ -614,7 +614,7 @@
     position: relative;
   }
 
-  .tab-item:hover {
+  .tab-item:not(.active):hover {
     background: rgba(0, 0, 0, 0.04);
     color: var(--text-primary, #1a1a1a);
   }
@@ -627,6 +627,11 @@
     border-bottom: 1px solid var(--bg-primary, #ffffff);
     margin-bottom: -1px;
     z-index: 2;
+  }
+
+  .tab-item.active:hover {
+    background: color-mix(in srgb, var(--bg-primary, #ffffff) 95%, var(--text-primary, #000000));
+    border-bottom-color: color-mix(in srgb, var(--bg-primary, #ffffff) 95%, var(--text-primary, #000000));
   }
 
   .tab-icon {

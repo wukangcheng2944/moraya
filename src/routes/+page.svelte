@@ -5403,6 +5403,11 @@ ${tr('welcome.tip')}
                 box-shadow var(--duration-quick, 150ms) var(--ease-smooth-out, cubic-bezier(0.22, 1, 0.36, 1));
   }
 
+  .parallel-pane-header:hover {
+    background: rgba(0, 0, 0, 0.05);
+    color: var(--text-primary);
+  }
+
   .parallel-pane-header.dragging-header {
     cursor: grabbing;
     background: rgba(0, 120, 212, 0.12) !important;
@@ -5412,6 +5417,10 @@ ${tr('welcome.tip')}
     background: var(--bg-primary);
     color: var(--text-primary);
     box-shadow: inset 0 2px 0 var(--accent-color);
+  }
+
+  .parallel-editor-pane.active-pane .parallel-pane-header:hover {
+    background: color-mix(in srgb, var(--bg-primary) 96%, var(--text-primary));
   }
 
   .parallel-pane-info {
